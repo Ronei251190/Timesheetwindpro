@@ -52,10 +52,6 @@ type Period = {
   invoiceDateISO: string;
 };
 
-type Colleague = { email: string; name?: string };
-
-type StoredUserData = { entries: Record<string, DayEntry>; signatureDataUrl: string | null };
-
 type AppState = {
   loginEmail: string;
   loginName: string;
@@ -66,14 +62,11 @@ type AppState = {
   entries: Record<string, DayEntry>;
   signatureDataUrl: string | null;
   lockedPeriodIds: string[];
-
-  colleagues: Colleague[];
-  users: Record<string, StoredUserData>;
 };
 
 /** ---------------- CONFIG ---------------- */
 
-const LS_KEY = "windpro_timesheet_final_v1";
+const LS_KEY = "windpro_timesheet_final_v2";
 const ADMIN_PASSWORD = "1234"; // schimbă tu
 const COLLECTOR_EMAIL = "borot@windpro.pl";
 
@@ -95,13 +88,22 @@ const WORK_TYPES: WorkType[] = [
   "Site Manager",
   "Service",
   "Driving to site from home",
+  "Driving to site from home", // (safe duplicate? better remove) -> removed below
   "Driving from site to home",
-];
+].filter((v, i, a) => a.indexOf(v) === i) as WorkType[];
 
 const EXP_TYPES: ExpenseType[] = ["Taxi", "Hotel", "Food", "Diesel", "Extra luggage", "PPE", "Other"];
 const PLATFORM_TYPES: PlatformType[] = ["SOV", "Jack-up", "CTV / Harbour", "N/A"];
 
-const VESSEL_PRESETS = ["Blue Tern", "Discovery Wind", "Apollo Wind", "Nobelwind", "Aeolus", "SOV (Other)", "Jack-up (Other)"];
+const VESSEL_PRESETS = [
+  "Blue Tern",
+  "Discovery Wind",
+  "Apollo Wind",
+  "Nobelwind",
+  "Aeolus",
+  "SOV (Other)",
+  "Jack-up (Other)",
+];
 
 /** ---------------- HELPERS ---------------- */
 
@@ -189,30 +191,19 @@ const DEFAULT_STATE: AppState = {
   loginName: "",
   selectedPeriodId: format(new Date(), "yyyy-MM"),
   selectedDateISO: todayISO(),
-
   entries: {},
   signatureDataUrl: null,
   lockedPeriodIds: [],
-
-  colleagues: [{ email: COLLECTOR_EMAIL, name: "Collector" }],
-  users: {},
 };
 
 function loadState(): AppState {
   const s = safeParse<AppState>(localStorage.getItem(LS_KEY), DEFAULT_STATE);
-  const merged: AppState = {
+  return {
     ...DEFAULT_STATE,
     ...s,
     entries: s.entries || {},
     lockedPeriodIds: s.lockedPeriodIds || [],
-    colleagues: s.colleagues?.length ? s.colleagues : DEFAULT_STATE.colleagues,
-    users: s.users || {},
   };
-  // ensure collector
-  if (!merged.colleagues.some((c) => normalizeEmail(c.email) === COLLECTOR_EMAIL)) {
-    merged.colleagues = [...merged.colleagues, { email: COLLECTOR_EMAIL, name: "Collector" }];
-  }
-  return merged;
 }
 function saveState(s: AppState) {
   localStorage.setItem(LS_KEY, JSON.stringify(s));
@@ -236,16 +227,6 @@ const smallBtn: React.CSSProperties = {
   background: "white",
   cursor: "pointer",
   fontWeight: 700,
-};
-const btnBlue: React.CSSProperties = {
-  padding: "12px 14px",
-  borderRadius: 12,
-  border: "1px solid #1f5eff",
-  background: "#1f5eff",
-  color: "white",
-  fontWeight: 700,
-  cursor: "pointer",
-  whiteSpace: "nowrap",
 };
 const btnGreen: React.CSSProperties = {
   padding: "12px 14px",
@@ -329,7 +310,10 @@ export default function App() {
 
   useEffect(() => saveState(state), [state]);
 
-  const selectedPeriod = useMemo(() => periods.find((p) => p.id === state.selectedPeriodId) || periods[0], [periods, state.selectedPeriodId]);
+  const selectedPeriod = useMemo(
+    () => periods.find((p) => p.id === state.selectedPeriodId) || periods[0],
+    [periods, state.selectedPeriodId]
+  );
 
   const isLocked = useMemo(() => state.lockedPeriodIds.includes(selectedPeriod.id), [state.lockedPeriodIds, selectedPeriod.id]);
 
@@ -382,7 +366,6 @@ export default function App() {
     const cells: { date: Date | null; iso?: string }[] = [];
 
     for (let i = 0; i < firstDay; i++) cells.push({ date: null });
-
     for (let d = 1; d <= count; d++) {
       const date = new Date(monthStart.getFullYear(), monthStart.getMonth(), d);
       cells.push({ date, iso: format(date, "yyyy-MM-dd") });
@@ -402,7 +385,10 @@ export default function App() {
 
   const totals = useMemo(() => {
     const hours = periodEntries.reduce((acc, e) => acc + clampNum(e.hours, 0), 0);
-    const expenses = periodEntries.reduce((acc, e) => acc + (e.expenses || []).reduce((a, x) => a + clampNum(x.amount, 0), 0), 0);
+    const expenses = periodEntries.reduce(
+      (acc, e) => acc + (e.expenses || []).reduce((a, x) => a + clampNum(x.amount, 0), 0),
+      0
+    );
     return { hours: round2(hours), expenses: round2(expenses) };
   }, [periodEntries]);
 
@@ -469,7 +455,9 @@ export default function App() {
 
   /** ------- Lock / Unlock ------- */
   const lockPeriod = () => {
-    setState((p) => (p.lockedPeriodIds.includes(selectedPeriod.id) ? p : { ...p, lockedPeriodIds: [...p.lockedPeriodIds, selectedPeriod.id] }));
+    setState((p) =>
+      p.lockedPeriodIds.includes(selectedPeriod.id) ? p : { ...p, lockedPeriodIds: [...p.lockedPeriodIds, selectedPeriod.id] }
+    );
   };
   const unlockAdmin = () => {
     const pass = window.prompt("Admin password:");
@@ -486,6 +474,8 @@ export default function App() {
     const margin = 36;
     const contentW = pageW - margin * 2;
 
+    const safe = (s: string) => trim1(String(s || "")).replace(/[^\x09\x0A\x0D\x20-\x7E€]/g, " ");
+
     doc.setFont("helvetica", "bold");
     doc.setFontSize(18);
     doc.text("Timesheet", margin, 46);
@@ -500,8 +490,6 @@ export default function App() {
 
     const leftX = margin + 12;
     const rightX = margin + contentW - 190;
-
-    const safe = (s: string) => trim1(String(s || "")).replace(/[^\x09\x0A\x0D\x20-\x7E€]/g, " ");
 
     doc.text(`Period: ${safe(selectedPeriod.label)}`, leftX, headerTop + 22);
     doc.text(`Invoice date: ${safe(selectedPeriod.invoiceDateISO)}`, leftX, headerTop + 38);
@@ -522,20 +510,20 @@ export default function App() {
     doc.text("Entries (Selected Period)", margin, y);
     y += 14;
 
-    // Table columns (similar look)
+    // Table
     const tableX = margin;
     const tableW = contentW;
 
     const cols = [
-      { label: "Date", w: 62 },
-      { label: "Work type", w: 170 },
-      { label: "Vessel", w: 70 },
-      { label: "Location", w: 70 },
-      { label: "Hours", w: 44 },
-      { label: "SW", w: 50 },
-      { label: "Expenses", w: 66 },
-      { label: "Expense note", w: 78 },
-      { label: "Work note", w: 75 },
+      { label: "Date", w: 70 },
+      { label: "Work type", w: 190 },
+      { label: "Vessel", w: 80 },
+      { label: "Location", w: 80 },
+      { label: "Hours", w: 52 },
+      { label: "SW", w: 58 },
+      { label: "Expenses", w: 78 },
+      { label: "Expense note", w: 90 },
+      { label: "Work note", w: 90 },
     ];
 
     const sumW = cols.reduce((a, c) => a + c.w, 0);
@@ -584,24 +572,26 @@ export default function App() {
         })
         .join(" | ");
       const expNote = safe(expNoteRaw || "-");
+
       const workNote = safe(trim1(e.workDone) || "-");
 
       const cells = [safe(e.dateISO), work, vessel, loc, hours, sw, exp, expNote, workNote];
 
-      // wrap and compute height
       const cellLines: string[][] = [];
       let maxLines = 1;
+
       for (let i = 0; i < cols.length; i++) {
         const lines = doc.splitTextToSize(cells[i], cols[i].w - pad * 2).slice(0, rowMaxLines);
         cellLines.push(lines);
         maxLines = Math.max(maxLines, lines.length);
       }
+
       const rowH = Math.max(baseRowH, 10 * maxLines + 6);
 
-      // page break
       if (y + rowH + 140 > pageH) {
         doc.addPage();
         y = margin + 30;
+
         doc.setFont("helvetica", "bold");
         doc.setFontSize(12);
         doc.text("Entries (Selected Period)", margin, y);
@@ -627,7 +617,6 @@ export default function App() {
         doc.setFontSize(8);
       }
 
-      // draw row
       cx = tableX;
       doc.setDrawColor(220);
       doc.rect(tableX, y, tableW, rowH);
@@ -644,7 +633,7 @@ export default function App() {
       y += rowH;
     }
 
-    // Totals + signature
+    // Totals + Signature
     y += 22;
     if (y + 110 > pageH) {
       doc.addPage();
@@ -713,16 +702,13 @@ export default function App() {
     const em = normalizeEmail(state.loginEmail);
     if (!em) return alert("Bagă Login email.");
     if (!trim1(state.loginName)) return alert("Bagă și Name.");
-
     if (isLocked) return alert("Perioada e locked.");
 
     setSending(true);
     try {
       const pdfBuf = buildPdfArrayBuffer();
 
-      // Download local PDF too
-      const doc = new jsPDF();
-      // easiest: regenerate as file using buffer
+      // download PDF local
       const blob = new Blob([pdfBuf], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -733,7 +719,10 @@ export default function App() {
       a.remove();
       URL.revokeObjectURL(url);
 
+      // send email to collector
       await sendToCollectorEmail(pdfBuf);
+
+      // lock period
       lockPeriod();
 
       alert("Submit OK ✅ PDF generated + sent to collector email.");
@@ -750,34 +739,6 @@ export default function App() {
     setCopyDayMode(true);
   };
 
-  const copyMyColleagues = () => {
-    setSubmitMenuOpen(false);
-
-    const toEmail = normalizeEmail(window.prompt(`Copy THIS PERIOD to colleague email:`, COLLECTOR_EMAIL) || "");
-    if (!toEmail) return;
-
-    // copy only this period entries into "users[toEmail]" bucket local
-    const periodOnly: Record<string, DayEntry> = {};
-    for (const [dateISO, entry] of Object.entries(state.entries)) {
-      if (inRangeISO(dateISO, selectedPeriod.startISO, selectedPeriod.endISO)) {
-        periodOnly[dateISO] = JSON.parse(JSON.stringify(entry));
-      }
-    }
-
-    setState((prev) => {
-      const users = { ...prev.users };
-      if (!users[toEmail]) users[toEmail] = { entries: {}, signatureDataUrl: null };
-      users[toEmail] = { ...users[toEmail], entries: { ...users[toEmail].entries, ...periodOnly } };
-
-      const hasCol = prev.colleagues.some((c) => normalizeEmail(c.email) === toEmail);
-      const colleagues = hasCol ? prev.colleagues : [...prev.colleagues, { email: toEmail }];
-
-      return { ...prev, users, colleagues };
-    });
-
-    alert(`Copied period → ${toEmail} (local).`);
-  };
-
   /** ------- Calendar day click (Copy mode = click target) ------- */
   const onCalendarPick = (targetISO: string) => {
     if (copyDayMode) {
@@ -791,11 +752,9 @@ export default function App() {
       setCopyDayMode(false);
       return;
     }
-
     setState((p) => ({ ...p, selectedDateISO: targetISO }));
   };
 
-  /** ------- UI ------- */
   return (
     <div style={{ maxWidth: 1280, margin: "0 auto", padding: 18, fontFamily: "Georgia, 'Times New Roman', serif" }}>
       <h1 style={{ margin: "0 0 4px 0" }}>WindPro TimeSheet</h1>
@@ -867,7 +826,7 @@ export default function App() {
                 position: "absolute",
                 right: 0,
                 top: "calc(100% + 8px)",
-                width: 260,
+                width: 280,
                 background: "white",
                 border: "1px solid #e6e6e6",
                 borderRadius: 12,
@@ -878,7 +837,6 @@ export default function App() {
             >
               <MenuItem onClick={submitExportLockAndEmail}>Submit (Export + Lock + Email)</MenuItem>
               <MenuItem onClick={enterCopyDayMode}>Copy my day (click calendar)</MenuItem>
-              <MenuItem onClick={copyMyColleagues}>Copy my colleagues (period)</MenuItem>
               <div style={{ padding: 10, borderTop: "1px solid #eee", fontSize: 12, opacity: 0.75 }}>
                 Sends to: <b>{COLLECTOR_EMAIL}</b>
               </div>
@@ -908,10 +866,16 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <div style={{ fontSize: 24, fontWeight: 700 }}>{monthLabel}</div>
             <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => setState((p) => ({ ...p, selectedDateISO: format(subMonths(selectedDate, 1), "yyyy-MM-dd") }))} style={iconBtn}>
+              <button
+                onClick={() => setState((p) => ({ ...p, selectedDateISO: format(subMonths(selectedDate, 1), "yyyy-MM-dd") }))}
+                style={iconBtn}
+              >
                 ‹
               </button>
-              <button onClick={() => setState((p) => ({ ...p, selectedDateISO: format(addMonths(selectedDate, 1), "yyyy-MM-dd") }))} style={iconBtn}>
+              <button
+                onClick={() => setState((p) => ({ ...p, selectedDateISO: format(addMonths(selectedDate, 1), "yyyy-MM-dd") }))}
+                style={iconBtn}
+              >
                 ›
               </button>
             </div>
@@ -996,9 +960,9 @@ export default function App() {
             </div>
 
             <canvas
-              ref={canvasRef}
               width={360}
               height={150}
+              ref={canvasRef}
               onPointerDown={sigPointerDown}
               onPointerMove={sigPointerMove}
               onPointerUp={sigPointerUp}
@@ -1043,7 +1007,12 @@ export default function App() {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: 12 }}>
               <label>
                 <div style={lbl}>Work type</div>
-                <select value={currentEntry.workType} disabled={isLocked} onChange={(e) => setEntry({ workType: e.target.value as WorkType })} style={input}>
+                <select
+                  value={currentEntry.workType}
+                  disabled={isLocked}
+                  onChange={(e) => setEntry({ workType: e.target.value as WorkType })}
+                  style={input}
+                >
                   {WORK_TYPES.map((t) => (
                     <option key={t} value={t}>
                       {t}
@@ -1054,30 +1023,62 @@ export default function App() {
 
               <label>
                 <div style={lbl}>Hours</div>
-                <input value={currentEntry.hours} disabled={isLocked} onChange={(e) => setEntry({ hours: clampNum(e.target.value, 0) })} type="number" min={0} step="0.25" style={input} />
+                <input
+                  value={currentEntry.hours}
+                  disabled={isLocked}
+                  onChange={(e) => setEntry({ hours: clampNum(e.target.value, 0) })}
+                  type="number"
+                  min={0}
+                  step="0.25"
+                  style={input}
+                />
               </label>
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 14 }}>
               <label>
                 <div style={lbl}>Location</div>
-                <input value={currentEntry.location} disabled={isLocked} onChange={(e) => setEntry({ location: e.target.value })} placeholder="ex: Borssele" style={input} />
+                <input
+                  value={currentEntry.location}
+                  disabled={isLocked}
+                  onChange={(e) => setEntry({ location: e.target.value })}
+                  placeholder="ex: Borssele"
+                  style={input}
+                />
               </label>
 
               <label>
                 <div style={lbl}>Service Worker (SW)</div>
-                <input value={currentEntry.serviceWorker} disabled={isLocked} onChange={(e) => setEntry({ serviceWorker: e.target.value })} placeholder="ex: 67008943" style={input} />
+                <input
+                  value={currentEntry.serviceWorker}
+                  disabled={isLocked}
+                  onChange={(e) => setEntry({ serviceWorker: e.target.value })}
+                  placeholder="ex: 67008943"
+                  style={input}
+                />
               </label>
             </div>
 
             <label style={{ display: "block", marginTop: 14 }}>
               <div style={lbl}>Work note</div>
-              <input value={currentEntry.workDone} disabled={isLocked} onChange={(e) => setEntry({ workDone: e.target.value })} placeholder="GBX exchange / HV test / torque check..." style={input} />
+              <input
+                value={currentEntry.workDone}
+                disabled={isLocked}
+                onChange={(e) => setEntry({ workDone: e.target.value })}
+                placeholder="GBX exchange / HV test / torque check..."
+                style={input}
+              />
             </label>
 
             <label style={{ display: "block", marginTop: 14 }}>
               <div style={lbl}>Comment</div>
-              <input value={currentEntry.comment} disabled={isLocked} onChange={(e) => setEntry({ comment: e.target.value })} placeholder="notes..." style={input} />
+              <input
+                value={currentEntry.comment}
+                disabled={isLocked}
+                onChange={(e) => setEntry({ comment: e.target.value })}
+                placeholder="notes..."
+                style={input}
+              />
             </label>
 
             {/* Expenses */}
@@ -1092,7 +1093,12 @@ export default function App() {
               <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
                 {(currentEntry.expenses || []).map((ex) => (
                   <div key={ex.id} style={{ display: "grid", gridTemplateColumns: "220px 140px 1fr 80px", gap: 10, alignItems: "center" }}>
-                    <select value={ex.type} disabled={isLocked} onChange={(e) => updateExpense(ex.id, { type: e.target.value as ExpenseType })} style={input}>
+                    <select
+                      value={ex.type}
+                      disabled={isLocked}
+                      onChange={(e) => updateExpense(ex.id, { type: e.target.value as ExpenseType })}
+                      style={input}
+                    >
                       {EXP_TYPES.map((t) => (
                         <option key={t} value={t}>
                           {t}
@@ -1100,9 +1106,24 @@ export default function App() {
                       ))}
                     </select>
 
-                    <input type="number" min={0} step="0.01" value={ex.amount} disabled={isLocked} onChange={(e) => updateExpense(ex.id, { amount: clampNum(e.target.value, 0) })} style={input} placeholder="Amount" />
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={ex.amount}
+                      disabled={isLocked}
+                      onChange={(e) => updateExpense(ex.id, { amount: clampNum(e.target.value, 0) })}
+                      style={input}
+                      placeholder="Amount"
+                    />
 
-                    <input value={ex.note} disabled={isLocked} onChange={(e) => updateExpense(ex.id, { note: e.target.value })} style={input} placeholder="note..." />
+                    <input
+                      value={ex.note}
+                      disabled={isLocked}
+                      onChange={(e) => updateExpense(ex.id, { note: e.target.value })}
+                      style={input}
+                      placeholder="note..."
+                    />
 
                     <button onClick={() => removeExpense(ex.id)} style={{ ...smallBtn, borderColor: "#eee" }} disabled={isLocked}>
                       ✕
@@ -1118,7 +1139,12 @@ export default function App() {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                   <label>
                     <div style={lbl}>Platform</div>
-                    <select value={currentEntry.platformType} disabled={isLocked} onChange={(e) => setEntry({ platformType: e.target.value as PlatformType })} style={input}>
+                    <select
+                      value={currentEntry.platformType}
+                      disabled={isLocked}
+                      onChange={(e) => setEntry({ platformType: e.target.value as PlatformType })}
+                      style={input}
+                    >
                       {PLATFORM_TYPES.map((p) => (
                         <option key={p} value={p}>
                           {p}
@@ -1137,7 +1163,10 @@ export default function App() {
                       disabled={isLocked}
                       onChange={(e) => {
                         const v = e.target.value;
-                        setEntry({ vesselPreset: v, vesselManual: trim1(currentEntry.vesselManual) ? currentEntry.vesselManual : v });
+                        setEntry({
+                          vesselPreset: v,
+                          vesselManual: trim1(currentEntry.vesselManual) ? currentEntry.vesselManual : v,
+                        });
                       }}
                       style={input}
                     >
@@ -1151,7 +1180,13 @@ export default function App() {
 
                   <label>
                     <div style={lbl}>Vessel (manual)</div>
-                    <input value={currentEntry.vesselManual} disabled={isLocked} onChange={(e) => setEntry({ vesselManual: e.target.value })} placeholder="ex: Blue Tern" style={input} />
+                    <input
+                      value={currentEntry.vesselManual}
+                      disabled={isLocked}
+                      onChange={(e) => setEntry({ vesselManual: e.target.value })}
+                      placeholder="ex: Blue Tern"
+                      style={input}
+                    />
                   </label>
                 </div>
               </div>
