@@ -1,17 +1,28 @@
+// App.tsx
+// WindPro TimeSheet — monthly pay periods (full month) from now until 2050
+// ✅ No pay rates (each person has different rate)
+// ✅ Export PDF (selected month period only)
+// ✅ Submit = lock period, Unlock = admin password
+// ✅ Day editor + Expenses + Vessel/Jack-up + Platform (SOV / Jack-up / CTV / Harbour)
+//
+// Install deps:
+//   npm i jspdf date-fns
+//
+// NOTE: This is single-file App.tsx for Vite + React + TS.
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { DayPicker } from "react-day-picker";
-import "react-day-picker/dist/style.css";
-import html2canvas from "html2canvas";
+import {
+  addMonths,
+  endOfMonth,
+  format,
+  getDaysInMonth,
+  parseISO,
+  startOfMonth,
+  subMonths,
+} from "date-fns";
 import jsPDF from "jspdf";
 
-/** =========================
- *  ADMIN PASSWORD (ONE PLACE)
- *  ========================= */
-const ADMIN_PASSWORD = "R@nei251190"; // <-- schimbă aici parola ta
-
-/** =========================
- *  Work Types + Vessels
- *  ========================= */
+/** --------- TYPES ---------- */
 
 type WorkType =
   | "Offshore (Harbour / CTV) DAY SHIFT"
@@ -25,7 +36,67 @@ type WorkType =
   | "Overtime"
   | "Travel (8h x 22€ = 176€) one way"
   | "Car allowance"
-  | "OFF / Rest";
+  | "OFF / Rest"
+  | "Onshore Installation Supervisor"
+  | "Site Manager"
+  | "Service"
+  | "Driving to site from home"
+  | "Driving from site to home";
+
+type ExpenseType = "Taxi" | "Hotel" | "Food" | "Diesel" | "Extra luggage" | "PPE" | "Other";
+
+type PlatformType = "SOV" | "Jack-up" | "CTV / Harbour" | "N/A";
+
+type DayEntry = {
+  dateISO: string; // yyyy-mm-dd
+
+  workType: WorkType;
+  hours: number;
+
+  location: string;
+  serviceWorker: string;
+
+  workDone: string;
+  comment: string;
+
+  // Expenses list (per day)
+  expenses: { id: string; type: ExpenseType; amount: number; note: string }[];
+
+  // Vessel / Jack-up section (per day)
+  platformType: PlatformType;
+  vesselPreset: string;
+  vesselManual: string;
+};
+
+type Period = {
+  id: string; // "2026-02"
+  label: string; // "2026 - February"
+  year: number;
+  monthIndex: number; // 0..11
+  startISO: string; // first day
+  endISO: string; // last day
+  invoiceDateISO: string; // default = endISO (can change later)
+};
+
+type AppState = {
+  loginEmail: string;
+  selectedPeriodId: string;
+  selectedDateISO: string;
+
+  // entries keyed by dateISO
+  entries: Record<string, DayEntry>;
+
+  // signature data url
+  signatureDataUrl: string | null;
+
+  // locked period IDs
+  lockedPeriodIds: string[];
+};
+
+/** --------- CONFIG ---------- */
+
+const ADMIN_PASSWORD = "1234"; // <-- CHANGE THIS
+const LS_KEY = "windpro_timesheet_v1";
 
 const WORK_TYPES: WorkType[] = [
   "Offshore (Harbour / CTV) DAY SHIFT",
@@ -40,1090 +111,943 @@ const WORK_TYPES: WorkType[] = [
   "Travel (8h x 22€ = 176€) one way",
   "Car allowance",
   "OFF / Rest",
+  "Onshore Installation Supervisor",
+  "Site Manager",
+  "Service",
+  "Driving to site from home",
+  "Driving from site to home",
 ];
 
-const VESSELS_PRESET = [
-  "",
+const EXP_TYPES: ExpenseType[] = ["Taxi", "Hotel", "Food", "Diesel", "Extra luggage", "PPE", "Other"];
+
+const PLATFORM_TYPES: PlatformType[] = ["SOV", "Jack-up", "CTV / Harbour", "N/A"];
+
+const VESSEL_PRESETS = [
   "Blue Tern",
   "Discovery Wind",
   "Apollo Wind",
-  "Other (type manually)",
-] as const;
+  "Nobelwind",
+  "North Sea Giant",
+  "Vidar",
+  "Aeolus",
+  "Sea Challenger",
+  "SOV (Other)",
+  "Jack-up (Other)",
+];
 
-type RateMode = "hourly" | "flat";
+/** --------- HELPERS ---------- */
 
-/** Rates EXACT ca în poza ta */
-const PAY_RULES: Record<WorkType, { rate: number; mode: RateMode }> = {
-  "Offshore (Harbour / CTV) DAY SHIFT": { rate: 43, mode: "hourly" },
-  "Offshore (Harbour / CTV) NIGHT SHIFT": { rate: 47, mode: "hourly" },
-  "Offshore Day Shift (SOV)": { rate: 40, mode: "hourly" },
-  "Offshore Night Shift (SOV)": { rate: 44, mode: "hourly" },
-  "Offshore Standby (SOV)": { rate: 35, mode: "hourly" },
-
-  "Car allowance": { rate: 2, mode: "flat" },
-  "Standby / On call at home": { rate: 27, mode: "flat" },
-
-  "Mob / Demob rate": { rate: 3, mode: "hourly" }, // dacă vrei "flat", îmi zici și schimb
-  "Overtime": { rate: 7, mode: "hourly" },
-  "Travel (8h x 22€ = 176€) one way": { rate: 176, mode: "flat" },
-
-  "Port / Harbour": { rate: 0, mode: "flat" },
-  "OFF / Rest": { rate: 0, mode: "flat" },
-};
-
-/** =========================
- *  Pay periods
- *  ========================= */
-
-type PayPeriod = {
-  year: number;
-  period: number; // 1..12
-  month: string;
-  weekStart: number;
-  weekEnd: number;
-  invoiceDate: string; // DD.MM.YYYY
-};
-
-/** =========================
- *  Entries
- *  ========================= */
-
-type Expenses = {
-  taxi: number;
-  hotel: number;
-  food: number;
-  diesel: number;
-  ppe: number;
-  other: number;
-  note: string;
-};
-
-type DayEntry = {
-  dateISO: string; // YYYY-MM-DD
-  location: string;
-  vessel: string; // NEW
-  workType: WorkType;
-  how: string;
-  hours: number;
-  serviceWorker: string;
-  comment: string;
-  expenses: Expenses;
-};
-
-type PeriodKey = string; // "2026-P2"
-
-type LockedPeriods = Record<
-  PeriodKey,
-  {
-    locked: boolean;
-    lockedAtISO: string;
-    submittedBy: string;
-  }
->;
-
-const DEFAULT_EXPENSES: Expenses = {
-  taxi: 0,
-  hotel: 0,
-  food: 0,
-  diesel: 0,
-  ppe: 0,
-  other: 0,
-  note: "",
-};
-
-function defaultEntry(dateISO: string): DayEntry {
-  return {
-    dateISO,
-    location: "",
-    vessel: "",
-    workType: "OFF / Rest",
-    how: "",
-    hours: 0,
-    serviceWorker: "",
-    comment: "",
-    expenses: { ...DEFAULT_EXPENSES },
-  };
+function uid(prefix = "id") {
+  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
 }
-
-/** =========================
- *  Utils
- *  ========================= */
-
-function toISO(d: Date) {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+function clampNum(n: any, fallback = 0) {
+  const x = Number(n);
+  return Number.isFinite(x) ? x : fallback;
 }
-
-function fromISO(iso: string) {
-  return new Date(iso + "T00:00:00");
+function round2(n: number) {
+  return Math.round(n * 100) / 100;
 }
-
-function niceDate(d: Date) {
-  return d.toLocaleDateString(undefined, {
-    weekday: "long",
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-  });
+function todayISO() {
+  return format(new Date(), "yyyy-MM-dd");
 }
-
-function getISOWeek(date: Date) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = d.getUTCDay() || 7; // Mon=1..Sun=7
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-  return { isoYear: d.getUTCFullYear(), isoWeek: weekNo };
-}
-
-function isWeekInRange(week: number, start: number, end: number) {
-  if (start <= end) return week >= start && week <= end;
-  return week >= start || week <= end; // wrap 52–3
-}
-
-function periodKey(year: number, period: number): PeriodKey {
-  return `${year}-P${period}`;
-}
-
-function sumExpenses(e: Expenses) {
-  return (
-    (Number(e.taxi) || 0) +
-    (Number(e.hotel) || 0) +
-    (Number(e.food) || 0) +
-    (Number(e.diesel) || 0) +
-    (Number(e.ppe) || 0) +
-    (Number(e.other) || 0)
-  );
-}
-
-function fmtDDMMYYYY(d: Date) {
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
-  return `${dd}.${mm}.${yyyy}`;
-}
-
-function lastBusinessDayOfMonth(year: number, monthIndex0: number) {
-  const d = new Date(year, monthIndex0 + 1, 0);
-  const dow = d.getDay(); // 0 Sun, 6 Sat
-  if (dow === 0) d.setDate(d.getDate() - 2);
-  if (dow === 6) d.setDate(d.getDate() - 1);
-  return d;
-}
-
-function buildPayPeriods(startYear: number, endYear: number): PayPeriod[] {
-  const months = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
-  ];
-
-  const ranges: Array<{ weekStart: number; weekEnd: number }> = [
-    { weekStart: 52, weekEnd: 3 },   // P1 Jan
-    { weekStart: 4, weekEnd: 7 },    // P2 Feb
-    { weekStart: 8, weekEnd: 11 },   // P3 Mar
-    { weekStart: 12, weekEnd: 16 },  // P4 Apr
-    { weekStart: 17, weekEnd: 20 },  // P5 May
-    { weekStart: 21, weekEnd: 24 },  // P6 Jun
-    { weekStart: 25, weekEnd: 29 },  // P7 Jul
-    { weekStart: 30, weekEnd: 33 },  // P8 Aug
-    { weekStart: 34, weekEnd: 38 },  // P9 Sep
-    { weekStart: 39, weekEnd: 42 },  // P10 Oct
-    { weekStart: 43, weekEnd: 46 },  // P11 Nov
-    { weekStart: 47, weekEnd: 51 },  // P12 Dec
-  ];
-
-  const out: PayPeriod[] = [];
-  for (let y = startYear; y <= endYear; y++) {
-    for (let p = 1; p <= 12; p++) {
-      const mi = p - 1;
-      out.push({
-        year: y,
-        period: p,
-        month: months[mi],
-        weekStart: ranges[mi].weekStart,
-        weekEnd: ranges[mi].weekEnd,
-        invoiceDate: fmtDDMMYYYY(lastBusinessDayOfMonth(y, mi)),
-      });
-    }
-  }
-  return out;
-}
-
-const PAY_PERIODS: PayPeriod[] = buildPayPeriods(2026, 2030);
-
-function findPayPeriodByDate(date: Date) {
-  const { isoYear, isoWeek } = getISOWeek(date);
-
-  const sameYear = PAY_PERIODS.find((p) => p.year === isoYear && isWeekInRange(isoWeek, p.weekStart, p.weekEnd));
-  if (sameYear) return sameYear;
-
-  const prevYear = PAY_PERIODS.find((p) => p.year === isoYear - 1 && isWeekInRange(isoWeek, p.weekStart, p.weekEnd));
-  if (prevYear) return prevYear;
-
-  const nextYear = PAY_PERIODS.find((p) => p.year === isoYear + 1 && isWeekInRange(isoWeek, p.weekStart, p.weekEnd));
-  if (nextYear) return nextYear;
-
-  return null;
-}
-
-/** Pay calculation */
-function calcPayEUR(entry: DayEntry): number {
-  const rule = PAY_RULES[entry.workType] ?? { rate: 0, mode: "flat" as const };
-  const hours = Number(entry.hours) || 0;
-
-  if (rule.mode === "flat") return rule.rate;
-  return rule.rate * hours;
-}
-
-function fmtEUR(n: number) {
-  return `€ ${n.toFixed(2)}`;
-}
-
-/** =========================
- *  Signature Pad
- *  ========================= */
-
-function useSignaturePad() {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const drawing = useRef(false);
-  const last = useRef<{ x: number; y: number } | null>(null);
-
-  function getPos(e: PointerEvent, canvas: HTMLCanvasElement) {
-    const rect = canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-  }
-
-  function ensureCanvas(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
-    const ratio = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    const w = Math.floor(rect.width * ratio);
-    const h = Math.floor(rect.height * ratio);
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
-      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-      ctx.lineWidth = 2;
-      ctx.lineCap = "round";
-      ctx.strokeStyle = "#111";
-    }
-  }
-
-  function start(e: React.PointerEvent<HTMLCanvasElement>) {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    drawing.current = true;
-    (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
-    last.current = getPos(e.nativeEvent, canvas);
-  }
-
-  function move(e: React.PointerEvent<HTMLCanvasElement>) {
-    const canvas = canvasRef.current;
-    if (!canvas || !drawing.current) return;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    ensureCanvas(ctx, canvas);
-
-    const pos = getPos(e.nativeEvent, canvas);
-    const prev = last.current ?? pos;
-
-    ctx.beginPath();
-    ctx.moveTo(prev.x, prev.y);
-    ctx.lineTo(pos.x, pos.y);
-    ctx.stroke();
-
-    last.current = pos;
-  }
-
-  function end() {
-    drawing.current = false;
-    last.current = null;
-  }
-
-  function clear() {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-  }
-
-  function toDataURL() {
-    const canvas = canvasRef.current;
-    if (!canvas) return "";
-    return canvas.toDataURL("image/png");
-  }
-
-  function loadFromDataURL(dataUrl: string) {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    clear();
-    if (!dataUrl) return;
-
-    const img = new Image();
-    img.onload = () => {
-      ensureCanvas(ctx, canvas);
-      const rect = canvas.getBoundingClientRect();
-      ctx.drawImage(img, 0, 0, rect.width, rect.height);
-    };
-    img.src = dataUrl;
-  }
-
-  return { canvasRef, start, move, end, clear, toDataURL, loadFromDataURL };
-}
-
-/** =========================
- *  Local Storage
- *  ========================= */
-
-const LS_EMAIL = "ts_email_v6";
-const LS_ENTRIES = "ts_entries_v6";
-const LS_SIGNATURE = "ts_signature_v6";
-const LS_LOCKS = "ts_locks_v6";
-
-function loadJSON<T>(key: string, fallback: T): T {
+function safeParse<T>(raw: string | null, fallback: T): T {
   try {
-    const raw = localStorage.getItem(key);
     if (!raw) return fallback;
     return JSON.parse(raw) as T;
   } catch {
     return fallback;
   }
 }
-
-function saveJSON<T>(key: string, value: T) {
-  localStorage.setItem(key, JSON.stringify(value));
+function trim1(s: string) {
+  return (s || "-").replace(/\s+/g, " ").trim();
+}
+function inRangeISO(dateISO: string, startISO: string, endISO: string) {
+  return dateISO >= startISO && dateISO <= endISO;
 }
 
-/** =========================
- *  App
- *  ========================= */
+function makeDefaultEntry(dateISO: string): DayEntry {
+  return {
+    dateISO,
+    workType: "Offshore Night Shift (SOV)",
+    hours: 0,
+    location: "",
+    serviceWorker: "",
+    workDone: "",
+    comment: "",
+    expenses: [],
+    platformType: "SOV",
+    vesselPreset: "Blue Tern",
+    vesselManual: "Blue Tern",
+  };
+}
+
+function generateMonthlyPeriodsUntil2050(): Period[] {
+  const start = new Date(2025, 0, 1); // Jan 2025
+  const end = new Date(2050, 11, 1);  // Dec 2050
+
+  const periods: Period[] = [];
+  let cur = startOfMonth(start);
+
+  while (cur <= end) {
+    const y = cur.getFullYear();
+    const m = cur.getMonth();
+    const s = startOfMonth(cur);
+    const e = endOfMonth(cur);
+
+    const startISO = format(s, "yyyy-MM-dd");
+    const endISO = format(e, "yyyy-MM-dd");
+
+    periods.push({
+      id: `${y}-${String(m + 1).padStart(2, "0")}`,
+      label: `${y} - ${format(cur, "MMMM")}`,
+      year: y,
+      monthIndex: m,
+      startISO,
+      endISO,
+      invoiceDateISO: endISO, // default invoice date = last day of month
+    });
+
+    cur = addMonths(cur, 1);
+  }
+
+  return periods;
+}
+
+/** --------- DEFAULT STATE ---------- */
+
+const DEFAULT_STATE: AppState = {
+  loginEmail: "",
+  selectedPeriodId: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`,
+  selectedDateISO: todayISO(),
+  entries: {},
+  signatureDataUrl: null,
+  lockedPeriodIds: [],
+};
+
+function loadState(): AppState {
+  const s = safeParse<AppState>(localStorage.getItem(LS_KEY), DEFAULT_STATE);
+
+  // Ensure selectedPeriodId exists even if user has older data
+  if (!s.selectedPeriodId) s.selectedPeriodId = DEFAULT_STATE.selectedPeriodId;
+  if (!s.selectedDateISO) s.selectedDateISO = DEFAULT_STATE.selectedDateISO;
+  if (!s.entries) s.entries = {};
+  if (!s.lockedPeriodIds) s.lockedPeriodIds = [];
+  return s;
+}
+
+function saveState(s: AppState) {
+  localStorage.setItem(LS_KEY, JSON.stringify(s));
+}
+
+/** --------- APP ---------- */
 
 export default function App() {
-  const [email, setEmail] = useState<string>(() => localStorage.getItem(LS_EMAIL) || "");
-  const [entries, setEntries] = useState<Record<string, DayEntry>>(() => loadJSON(LS_ENTRIES, {}));
-  const [signatureDataUrl, setSignatureDataUrl] = useState<string>(() => localStorage.getItem(LS_SIGNATURE) || "");
-  const [locks, setLocks] = useState<LockedPeriods>(() => loadJSON(LS_LOCKS, {}));
+  const periods = useMemo(() => generateMonthlyPeriodsUntil2050(), []);
+  const [state, setState] = useState<AppState>(() => loadState());
 
-  const [month, setMonth] = useState<Date>(new Date());
-  const [selectedDay, setSelectedDay] = useState<Date | undefined>(new Date());
+  useEffect(() => {
+    saveState(state);
+  }, [state]);
 
-  // default: 2026 P2
-  const [selectedPeriod, setSelectedPeriod] = useState<{ year: number; period: number }>({ year: 2026, period: 2 });
+  const selectedPeriod = useMemo(() => {
+    const found = periods.find((p) => p.id === state.selectedPeriodId);
+    return found || periods[0];
+  }, [periods, state.selectedPeriodId]);
 
-  // vessel preset + custom
-  const [vesselPreset, setVesselPreset] = useState<(typeof VESSELS_PRESET)[number]>("");
+  // If selected date is outside selected period, keep it but show correct month calendar from selected date.
+  const selectedDate = useMemo(() => parseISO(state.selectedDateISO), [state.selectedDateISO]);
 
-  const selectedISO = useMemo(() => (selectedDay ? toISO(selectedDay) : ""), [selectedDay]);
+  const monthStart = useMemo(() => startOfMonth(selectedDate), [selectedDate]);
+  const monthLabel = useMemo(() => format(monthStart, "MMMM yyyy"), [monthStart]);
 
-  const current = useMemo<DayEntry>(() => {
-    if (!selectedISO) return defaultEntry("");
-    return entries[selectedISO] ?? defaultEntry(selectedISO);
-  }, [entries, selectedISO]);
+  const isLocked = useMemo(
+    () => state.lockedPeriodIds.includes(selectedPeriod.id),
+    [state.lockedPeriodIds, selectedPeriod.id]
+  );
 
-  const payInfoForSelectedDay = useMemo(() => {
-    if (!selectedDay) return null;
-    const { isoYear, isoWeek } = getISOWeek(selectedDay);
-    const p = findPayPeriodByDate(selectedDay);
-    return { isoYear, isoWeek, period: p };
-  }, [selectedDay]);
+  // Current day entry
+  const currentEntry: DayEntry = useMemo(() => {
+    return state.entries[state.selectedDateISO] || makeDefaultEntry(state.selectedDateISO);
+  }, [state.entries, state.selectedDateISO]);
 
-  const markedDays = useMemo(() => Object.keys(entries).map((iso) => fromISO(iso)), [entries]);
-
-  useEffect(() => localStorage.setItem(LS_EMAIL, email), [email]);
-  useEffect(() => saveJSON(LS_ENTRIES, entries), [entries]);
-  useEffect(() => localStorage.setItem(LS_SIGNATURE, signatureDataUrl), [signatureDataUrl]);
-  useEffect(() => saveJSON(LS_LOCKS, locks), [locks]);
-
-  function updateCurrent(patch: Partial<DayEntry>) {
-    if (!selectedISO) return;
-    setEntries((prev) => {
-      const base = prev[selectedISO] ?? defaultEntry(selectedISO);
-      return { ...prev, [selectedISO]: { ...base, ...patch, dateISO: selectedISO } };
+  const setEntry = (patch: Partial<DayEntry>) => {
+    if (isLocked) return;
+    setState((prev) => {
+      const existing = prev.entries[prev.selectedDateISO] || makeDefaultEntry(prev.selectedDateISO);
+      const nextEntry: DayEntry = { ...existing, ...patch };
+      return { ...prev, entries: { ...prev.entries, [prev.selectedDateISO]: nextEntry } };
     });
-  }
+  };
 
-  function updateExpenses(patch: Partial<Expenses>) {
-    updateCurrent({ expenses: { ...(current.expenses ?? DEFAULT_EXPENSES), ...patch } });
-  }
-
-  function clearDay() {
-    if (!selectedISO) return;
-    setEntries((prev) => {
-      const copy = { ...prev };
-      delete copy[selectedISO];
-      return copy;
+  const clearDay = () => {
+    if (isLocked) return;
+    setState((prev) => {
+      const copy = { ...prev.entries };
+      delete copy[prev.selectedDateISO];
+      return { ...prev, entries: copy };
     });
-  }
+  };
 
-  const periodOptions = useMemo(() => {
-    const map = new Map<string, PayPeriod>();
-    for (const p of PAY_PERIODS) map.set(periodKey(p.year, p.period), p);
-    return Array.from(map.values()).sort((a, b) => (a.year - b.year) || (a.period - b.period));
-  }, []);
+  // Saved dots for month view (any entry saved that month)
+  const savedDatesInMonth = useMemo(() => {
+    const all = Object.keys(state.entries);
+    const monthStr = format(monthStart, "yyyy-MM");
+    return new Set(all.filter((d) => d.startsWith(monthStr)));
+  }, [state.entries, monthStart]);
 
-  const selectedPeriodObj = useMemo(() => {
-    return PAY_PERIODS.find((p) => p.year === selectedPeriod.year && p.period === selectedPeriod.period) || null;
-  }, [selectedPeriod]);
-
-  const selectedPeriodIsLocked = useMemo(() => {
-    const key = periodKey(selectedPeriod.year, selectedPeriod.period);
-    return Boolean(locks[key]?.locked);
-  }, [locks, selectedPeriod]);
-
+  // Entries inside selected period for totals/pdf
   const periodEntries = useMemo(() => {
-    const p = selectedPeriodObj;
-    if (!p) return [] as DayEntry[];
+    const out: DayEntry[] = [];
+    for (const [dateISO, entry] of Object.entries(state.entries)) {
+      if (inRangeISO(dateISO, selectedPeriod.startISO, selectedPeriod.endISO)) out.push(entry);
+    }
+    out.sort((a, b) => (a.dateISO < b.dateISO ? -1 : 1));
+    return out;
+  }, [state.entries, selectedPeriod.startISO, selectedPeriod.endISO]);
 
-    return Object.values(entries).filter((e) => {
-      const d = fromISO(e.dateISO);
-      const ep = findPayPeriodByDate(d);
-      return !!ep && ep.year === p.year && ep.period === p.period;
-    });
-  }, [entries, selectedPeriodObj]);
+  const totals = useMemo(() => {
+    const hours = periodEntries.reduce((acc, e) => acc + clampNum(e.hours, 0), 0);
+    const expenses = periodEntries.reduce((acc, e) => {
+      const sum = (e.expenses || []).reduce((a, x) => a + clampNum(x.amount, 0), 0);
+      return acc + sum;
+    }, 0);
 
-  const periodTotals = useMemo(() => {
-    const hours = periodEntries.reduce((s, e) => s + (Number(e.hours) || 0), 0);
-    const expenses = periodEntries.reduce((s, e) => s + sumExpenses(e.expenses), 0);
-    const pay = periodEntries.reduce((s, e) => s + calcPayEUR(e), 0);
-    return { hours, expenses, pay };
+    // Pay is not calculated
+    return { hours: round2(hours), expenses: round2(expenses), pay: 0 };
   }, [periodEntries]);
 
-  const isSelectedDayLocked = useMemo(() => {
-    if (!selectedDay) return false;
-    const p = findPayPeriodByDate(selectedDay);
-    if (!p) return false;
-    return Boolean(locks[periodKey(p.year, p.period)]?.locked);
-  }, [selectedDay, locks]);
+  /** ---------- Calendar grid (month) ---------- */
+  const days = useMemo(() => {
+    const count = getDaysInMonth(monthStart);
+    const firstDay = monthStart.getDay(); // 0 Sun .. 6 Sat
+    const leading = firstDay; // Sunday-start grid
 
-  /** Keep vessel preset synced with current.vessel */
-  useEffect(() => {
-    // when you click a date, try to match vessel to preset
-    const v = (current.vessel || "").trim();
-    const match = (VESSELS_PRESET as readonly string[]).find((x) => x && x.toLowerCase() === v.toLowerCase());
-    if (match) setVesselPreset(match as any);
-    else if (v) setVesselPreset("Other (type manually)");
-    else setVesselPreset("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedISO]);
+    const cells: { date: Date | null; iso?: string }[] = [];
+    for (let i = 0; i < leading; i++) cells.push({ date: null });
 
-  /** Signature */
-  const sig = useSignaturePad();
-  useEffect(() => {
-    if (signatureDataUrl) sig.loadFromDataURL(signatureDataUrl);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  function saveSignature() {
-    setSignatureDataUrl(sig.toDataURL());
-  }
-
-  function clearSignature() {
-    sig.clear();
-    setSignatureDataUrl("");
-  }
-
-  /** PDF */
-  const pdfRef = useRef<HTMLDivElement | null>(null);
-
-  async function exportPDFPeriod({ lockAfter }: { lockAfter: boolean }) {
-    if (!selectedPeriodObj) return alert("Select a pay period.");
-    if (!email.trim()) return alert("Set email first (Login).");
-    if (!signatureDataUrl) return alert("Add signature and press Save.");
-    if (periodEntries.length === 0) return alert("No entries in selected period.");
-    if (!pdfRef.current) return;
-
-    const canvas = await html2canvas(pdfRef.current, { scale: 2, backgroundColor: "#ffffff" });
-    const imgData = canvas.toDataURL("image/png");
-
-    const pdf = new jsPDF("p", "mm", "a4");
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-
-    const imgProps = pdf.getImageProperties(imgData);
-    const imgWidth = pageWidth;
-    const imgHeight = (imgProps.height * imgWidth) / imgProps.width;
-
-    if (imgHeight <= pageHeight) {
-      pdf.addImage(imgData, "PNG", 0, 0, imgWidth, imgHeight);
-    } else {
-      let y = 0;
-      let remaining = imgHeight;
-      while (remaining > 0) {
-        pdf.addImage(imgData, "PNG", 0, -y, imgWidth, imgHeight);
-        remaining -= pageHeight;
-        y += pageHeight;
-        if (remaining > 0) pdf.addPage();
-      }
+    for (let d = 1; d <= count; d++) {
+      const date = new Date(monthStart.getFullYear(), monthStart.getMonth(), d);
+      const iso = format(date, "yyyy-MM-dd");
+      cells.push({ date, iso });
     }
+    while (cells.length % 7 !== 0) cells.push({ date: null });
+    return cells;
+  }, [monthStart]);
 
-    pdf.save(`timesheet_${selectedPeriodObj.year}_P${selectedPeriodObj.period}.pdf`);
+  /** ---------- Expenses helpers ---------- */
+  const addExpense = () => {
+    if (isLocked) return;
+    const ex = currentEntry.expenses || [];
+    setEntry({ expenses: [...ex, { id: uid("exp"), type: "Taxi", amount: 0, note: "" }] });
+  };
+  const updateExpense = (id: string, patch: Partial<{ type: ExpenseType; amount: number; note: string }>) => {
+    if (isLocked) return;
+    const ex = (currentEntry.expenses || []).map((e) => (e.id === id ? { ...e, ...patch } : e));
+    setEntry({ expenses: ex });
+  };
+  const removeExpense = (id: string) => {
+    if (isLocked) return;
+    const ex = (currentEntry.expenses || []).filter((e) => e.id !== id);
+    setEntry({ expenses: ex });
+  };
 
-    if (lockAfter) {
-      const key = periodKey(selectedPeriodObj.year, selectedPeriodObj.period);
-      setLocks((prev) => ({
-        ...prev,
-        [key]: { locked: true, lockedAtISO: new Date().toISOString(), submittedBy: email.trim() },
-      }));
-      alert(`Submitted & locked: ${selectedPeriodObj.year} P${selectedPeriodObj.period}`);
-    }
-  }
-
-  /** Unlock (Admin) */
-  function unlockSelectedPeriod() {
-    if (!selectedPeriodObj) return alert("Select a pay period.");
-
-    const key = periodKey(selectedPeriodObj.year, selectedPeriodObj.period);
-    if (!locks[key]?.locked) return alert("This period is not locked.");
-
-    const pwd = window.prompt("Admin password to UNLOCK this period:");
-    if (pwd === null) return;
-
-    if (pwd !== ADMIN_PASSWORD) return alert("Wrong password.");
-
-    setLocks((prev) => {
-      const copy = { ...prev };
-      delete copy[key];
-      return copy;
+  /** ---------- Lock / Unlock ---------- */
+  const submitLock = () => {
+    setState((prev) => {
+      if (prev.lockedPeriodIds.includes(selectedPeriod.id)) return prev;
+      return { ...prev, lockedPeriodIds: [...prev.lockedPeriodIds, selectedPeriod.id] };
     });
+  };
+  const unlockAdmin = () => {
+    const pass = window.prompt("Admin password:");
+    if (pass !== ADMIN_PASSWORD) {
+      alert("Wrong password.");
+      return;
+    }
+    setState((prev) => ({
+      ...prev,
+      lockedPeriodIds: prev.lockedPeriodIds.filter((id) => id !== selectedPeriod.id),
+    }));
+  };
 
-    alert(`Unlocked: ${selectedPeriodObj.year} P${selectedPeriodObj.period}`);
-  }
+  /** ---------- PDF Export (selected period only) ---------- */
+  const exportPdfPeriod = () => {
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const margin = 40;
+    let y = margin;
 
-  const currentRate = PAY_RULES[current.workType]?.rate ?? 0;
-  const currentMode = PAY_RULES[current.workType]?.mode ?? "flat";
-  const currentPay = selectedISO ? calcPayEUR(current) : 0;
+    doc.setFontSize(18);
+    doc.text("WindPro TimeSheet", margin, y);
+    y += 18;
+
+    doc.setFontSize(10);
+    doc.text(`Login email: ${state.loginEmail || "-"}`, margin, y);
+    y += 14;
+
+    doc.text(`Period: ${selectedPeriod.label}`, margin, y);
+    y += 14;
+
+    doc.text(`Range: ${selectedPeriod.startISO} → ${selectedPeriod.endISO}`, margin, y);
+    y += 14;
+
+    doc.text(`Invoice date: ${selectedPeriod.invoiceDateISO}`, margin, y);
+    y += 16;
+
+    doc.text(`Hours (period): ${totals.hours}`, margin, y);
+    y += 12;
+
+    doc.text(`Expenses (period): € ${totals.expenses}`, margin, y);
+    y += 12;
+
+    doc.text(`Pay (period): € ${totals.pay} (rates are individual, not calculated)`, margin, y);
+    y += 18;
+
+    doc.setFontSize(11);
+    doc.text("Entries:", margin, y);
+    y += 10;
+
+    doc.setFontSize(9);
+    const header =
+      "Date | Work type | Hours | Location | Service Worker | Platform | Vessel | Work done | Comment | Expenses";
+    doc.text(header, margin, y);
+    y += 10;
+
+    doc.setDrawColor(200);
+    doc.line(margin, y, 555, y);
+    y += 12;
+
+    for (const e of periodEntries) {
+      const expSum = round2((e.expenses || []).reduce((a, x) => a + clampNum(x.amount, 0), 0));
+      const vesselName = (e.vesselManual || e.vesselPreset || "-").trim();
+
+      const row =
+        `${e.dateISO} | ${e.workType} | ${round2(e.hours)} | ${trim1(e.location)} | ${trim1(e.serviceWorker)} | ` +
+        `${e.platformType} | ${trim1(vesselName)} | ${trim1(e.workDone)} | ${trim1(e.comment)} | € ${expSum}`;
+
+      const lines = doc.splitTextToSize(row, 555 - margin);
+      for (const line of lines) {
+        if (y > 780) {
+          doc.addPage();
+          y = margin;
+        }
+        doc.text(line, margin, y);
+        y += 11;
+      }
+      y += 4;
+    }
+
+    y += 10;
+    doc.setFontSize(11);
+    doc.text("Signature:", margin, y);
+    y += 8;
+
+    if (state.signatureDataUrl) {
+      try {
+        doc.addImage(state.signatureDataUrl, "PNG", margin, y, 250, 70);
+        y += 80;
+      } catch {
+        doc.setFontSize(9);
+        doc.text("(Signature image could not be embedded)", margin, y);
+      }
+    } else {
+      doc.setFontSize(9);
+      doc.text("(No signature saved)", margin, y);
+    }
+
+    doc.save(`WindPro_TimeSheet_${selectedPeriod.id}.pdf`);
+  };
+
+  /** ---------- Signature (canvas) ---------- */
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const drawing = useRef(false);
+
+  const sigPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (isLocked) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    drawing.current = true;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const yy = e.clientY - rect.top;
+
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(x, yy);
+  };
+
+  const sigPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!drawing.current) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const yy = e.clientY - rect.top;
+
+    ctx.lineTo(x, yy);
+    ctx.stroke();
+  };
+
+  const sigPointerUp = () => {
+    if (!drawing.current) return;
+    drawing.current = false;
+  };
+
+  const signatureSave = () => {
+    if (isLocked) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const url = canvas.toDataURL("image/png");
+    setState((prev) => ({ ...prev, signatureDataUrl: url }));
+  };
+
+  const signatureClear = () => {
+    if (isLocked) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setState((prev) => ({ ...prev, signatureDataUrl: null }));
+  };
+
+  /** ---------- UI ---------- */
 
   return (
-    <div
-      style={{
-        ...styles.page,
-        backgroundImage: "url(/bg.jpg)", // put image in public/bg.jpg
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-        backgroundRepeat: "no-repeat",
-        minHeight: "100vh",
-      }}
-    >
-      <div style={styles.overlay}>
-        <header style={styles.topbar}>
+    <div style={{ maxWidth: 1280, margin: "0 auto", padding: 18, fontFamily: "Georgia, 'Times New Roman', serif" }}>
+      {/* Header (changed) */}
+      <h1 style={{ margin: "0 0 4px 0" }}>WindPro TimeSheet</h1>
+      <div style={{ opacity: 0.7, marginBottom: 12 }}>
+        PDF doar pe perioada selectată (luna). Submit = export + lock. Unlock = admin.
+      </div>
+
+      {/* Top bar */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "320px 1fr auto auto auto",
+          gap: 12,
+          alignItems: "center",
+          padding: 14,
+          borderRadius: 14,
+          border: "1px solid #eee",
+          background: "white",
+        }}
+      >
+        <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", alignItems: "center", gap: 10 }}>
+          <div style={{ opacity: 0.8 }}>Login email:</div>
+          <input
+            value={state.loginEmail}
+            onChange={(e) => setState((p) => ({ ...p, loginEmail: e.target.value }))}
+            placeholder="ex: borot@windpro.pl"
+            style={{ padding: 10, borderRadius: 12, border: "1px solid #ddd" }}
+          />
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", alignItems: "center", gap: 10 }}>
+          <div style={{ opacity: 0.8 }}>Pay period:</div>
+          <select
+            value={state.selectedPeriodId}
+            onChange={(e) => setState((p) => ({ ...p, selectedPeriodId: e.target.value }))}
+            style={{ padding: 10, borderRadius: 12, border: "1px solid #ddd" }}
+          >
+            {periods.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <button
+          onClick={exportPdfPeriod}
+          style={{
+            padding: "12px 14px",
+            borderRadius: 12,
+            border: "1px solid #1f5eff",
+            background: "#1f5eff",
+            color: "white",
+            fontWeight: 700,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Export PDF (Period)
+        </button>
+
+        <button
+          onClick={() => {
+            exportPdfPeriod();
+            submitLock();
+          }}
+          style={{
+            padding: "12px 14px",
+            borderRadius: 12,
+            border: "1px solid #178a3a",
+            background: "#178a3a",
+            color: "white",
+            fontWeight: 700,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Submit (Lock Period)
+        </button>
+
+        <button
+          onClick={unlockAdmin}
+          style={{
+            padding: "12px 14px",
+            borderRadius: 12,
+            border: "1px solid #f0bcbc",
+            background: "white",
+            color: "#b55",
+            fontWeight: 700,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+            opacity: 0.85,
+          }}
+        >
+          Unlock (Admin)
+        </button>
+      </div>
+
+      {/* Cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr 1fr", gap: 14, marginTop: 14 }}>
+        <Card title="Selected period" big={selectedPeriod.label}>
           <div>
-            <div style={{ fontSize: 20, fontWeight: 900 }}>Calendar Timesheet</div>
-            <div style={{ color: "#666", fontSize: 13 }}>
-              PDF doar pe perioada selectată (ex P2). Submit = export + lock. Unlock = admin.
-            </div>
+            {selectedPeriod.startISO} → {selectedPeriod.endISO} | Invoice {selectedPeriod.invoiceDateISO}
           </div>
+          <div style={{ marginTop: 6, color: isLocked ? "#b55" : "#1f5eff", fontWeight: 700 }}>
+            {isLocked ? "Locked" : "Editable"}
+          </div>
+        </Card>
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{ fontSize: 12, color: "#666" }}>Login email:</span>
-              <input
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="ex: borot@windpro.pl"
-                style={{ ...styles.input, width: 220 }}
-              />
-            </div>
+        <Card title="Hours (period)" big={totals.hours.toFixed(2)}>
+          <div style={{ opacity: 0.7 }}>Sum of hours inside selected month</div>
+        </Card>
 
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{ fontSize: 12, color: "#666" }}>Pay period:</span>
-              <select
-                value={periodKey(selectedPeriod.year, selectedPeriod.period)}
-                onChange={(e) => {
-                  const [yy, pp] = e.target.value.split("-P");
-                  setSelectedPeriod({ year: Number(yy), period: Number(pp) });
-                }}
-                style={{ ...styles.input, width: 360 }}
+        <Card title="Expenses (period)" big={`€ ${totals.expenses.toFixed(2)}`}>
+          <div style={{ opacity: 0.7 }}>Sum of expenses inside selected month</div>
+        </Card>
+
+        <Card title="Pay (period)" big={`€ ${totals.pay.toFixed(2)}`}>
+          <div style={{ opacity: 0.7 }}>Not calculated (individual rates)</div>
+        </Card>
+      </div>
+
+      {/* Main area */}
+      <div style={{ display: "grid", gridTemplateColumns: "420px 1fr", gap: 16, marginTop: 16 }}>
+        {/* LEFT: Month Calendar + Signature */}
+        <div style={{ borderRadius: 14, border: "1px solid #eee", padding: 16, background: "white" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <div style={{ fontSize: 24, fontWeight: 700 }}>{monthLabel}</div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={() =>
+                  setState((p) => ({ ...p, selectedDateISO: format(subMonths(selectedDate, 1), "yyyy-MM-dd") }))
+                }
+                style={iconBtn}
+                title="Prev month"
               >
-                {periodOptions.map((p) => (
-                  <option key={periodKey(p.year, p.period)} value={periodKey(p.year, p.period)}>
-                    {p.year} - P{p.period} ({p.month}) [W{p.weekStart}–W{p.weekEnd}] Inv {p.invoiceDate}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div style={{ display: "flex", gap: 8 }}>
-              <button style={styles.btnPrimary} onClick={() => exportPDFPeriod({ lockAfter: false })}>
-                Export PDF (Period)
+                ‹
               </button>
               <button
-                style={styles.btnSubmit}
-                onClick={() => exportPDFPeriod({ lockAfter: true })}
-                disabled={selectedPeriodIsLocked}
-                title={selectedPeriodIsLocked ? "Already locked" : "Export + Lock"}
+                onClick={() =>
+                  setState((p) => ({ ...p, selectedDateISO: format(addMonths(selectedDate, 1), "yyyy-MM-dd") }))
+                }
+                style={iconBtn}
+                title="Next month"
               >
-                Submit (Lock Period)
-              </button>
-              <button
-                style={styles.btnDanger}
-                onClick={unlockSelectedPeriod}
-                disabled={!selectedPeriodIsLocked}
-                title={selectedPeriodIsLocked ? "Unlock selected period (admin)" : "Not locked"}
-              >
-                Unlock (Admin)
+                ›
               </button>
             </div>
           </div>
-        </header>
 
-        <section style={styles.summaryRow}>
-          <div style={styles.card}>
-            <div style={styles.label}>Selected period</div>
-            <div style={styles.value}>
-              {selectedPeriodObj ? `${selectedPeriodObj.year} P${selectedPeriodObj.period} (${selectedPeriodObj.month})` : "-"}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8, marginTop: 12, opacity: 0.75 }}>
+            {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
+              <div key={d} style={{ textAlign: "center" }}>
+                {d}
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8, marginTop: 10 }}>
+            {days.map((cell, idx) => {
+              if (!cell.date || !cell.iso) return <div key={idx} style={{ height: 44 }} />;
+              const isSelected = cell.iso === state.selectedDateISO;
+              const saved = savedDatesInMonth.has(cell.iso);
+
+              return (
+                <button
+                  key={cell.iso}
+                  onClick={() => setState((p) => ({ ...p, selectedDateISO: cell.iso! }))}
+                  style={{
+                    height: 44,
+                    borderRadius: 999,
+                    border: isSelected ? "3px solid #1f5eff" : "1px solid transparent",
+                    background: "white",
+                    cursor: "pointer",
+                    position: "relative",
+                    fontWeight: 700,
+                  }}
+                >
+                  {format(cell.date, "d")}
+                  {saved && (
+                    <>
+                      <span style={dotStyle(-5)} />
+                      <span style={dotStyle(5)} />
+                    </>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, opacity: 0.7 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 999, background: "#1f5eff", display: "inline-block" }} />
+            <span>days with saved entry</span>
+          </div>
+
+          {/* Signature */}
+          <div style={{ marginTop: 18 }}>
+            <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 10 }}>Signature</div>
+
+            <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+              <button onClick={signatureSave} style={smallBtn} disabled={isLocked}>
+                Save
+              </button>
+              <button onClick={signatureClear} style={smallBtn} disabled={isLocked}>
+                Clear
+              </button>
             </div>
-            <div style={{ color: "#666", fontSize: 12, marginTop: 6 }}>
-              {selectedPeriodObj ? `Weeks ${selectedPeriodObj.weekStart}–${selectedPeriodObj.weekEnd} | Invoice ${selectedPeriodObj.invoiceDate}` : ""}
-            </div>
-            {selectedPeriodIsLocked ? (
-              <div style={{ marginTop: 8, fontSize: 12, color: "#b42318", fontWeight: 800 }}>LOCKED ✅</div>
-            ) : (
-              <div style={{ marginTop: 8, fontSize: 12, color: "#1a73e8", fontWeight: 800 }}>Editable</div>
-            )}
-          </div>
 
-          <div style={styles.card}>
-            <div style={styles.label}>Hours (period)</div>
-            <div style={styles.value}>{periodTotals.hours.toFixed(2)}</div>
-          </div>
+            <div style={{ opacity: 0.7, marginBottom: 10 }}>Semnează aici. Pentru PDF trebuie să dai Save.</div>
 
-          <div style={styles.card}>
-            <div style={styles.label}>Expenses (period)</div>
-            <div style={styles.value}>{fmtEUR(periodTotals.expenses)}</div>
-          </div>
-
-          <div style={styles.card}>
-            <div style={styles.label}>Pay (period)</div>
-            <div style={styles.value}>{fmtEUR(periodTotals.pay)}</div>
-          </div>
-        </section>
-
-        <div style={styles.grid}>
-          {/* Calendar + signature */}
-          <div style={styles.cardPad}>
-            <DayPicker
-              mode="single"
-              selected={selectedDay}
-              onSelect={(d) => setSelectedDay(d ?? undefined)}
-              month={month}
-              onMonthChange={setMonth}
-              showOutsideDays
-              modifiers={{ marked: markedDays }}
-              modifiersClassNames={{ marked: "markedDay" }}
-              styles={{ caption: { fontWeight: 900 } }}
+            <canvas
+              ref={canvasRef}
+              width={360}
+              height={150}
+              onPointerDown={sigPointerDown}
+              onPointerMove={sigPointerMove}
+              onPointerUp={sigPointerUp}
+              onPointerLeave={sigPointerUp}
+              style={{
+                width: "100%",
+                height: 150,
+                borderRadius: 12,
+                border: "1px solid #ddd",
+                background: "white",
+                touchAction: "none",
+                opacity: isLocked ? 0.6 : 1,
+              }}
             />
 
-            <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center", color: "#666", fontSize: 13 }}>
-              <span style={{ width: 10, height: 10, borderRadius: 999, background: "#1a73e8", display: "inline-block" }} />
-              days with saved entry
-            </div>
+            {state.signatureDataUrl && (
+              <div style={{ marginTop: 8, fontSize: 12, color: "#178a3a", fontWeight: 700 }}>Signature saved ✅</div>
+            )}
+          </div>
+        </div>
 
-            <div style={{ marginTop: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                <div style={{ fontWeight: 900 }}>Signature</div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button style={styles.btn} onClick={saveSignature}>Save</button>
-                  <button style={styles.btnDanger} onClick={clearSignature}>Clear</button>
+        {/* RIGHT: Day Editor */}
+        <div style={{ borderRadius: 14, border: "1px solid #eee", padding: 16, background: "white" }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 28, fontWeight: 800 }}>{format(selectedDate, "EEEE, MMMM dd, yyyy")}</div>
+              <div style={{ marginTop: 6, opacity: 0.8 }}>
+                <div>
+                  Date: <b>{state.selectedDateISO}</b>
                 </div>
+                <div>
+                  Pay Period: <b>{selectedPeriod.label}</b>
+                </div>
+                <div>
+                  Range: {selectedPeriod.startISO} → {selectedPeriod.endISO}
+                </div>
+                <div>Invoice date: {selectedPeriod.invoiceDateISO}</div>
               </div>
-
-              <div style={{ color: "#666", fontSize: 12, marginTop: 6 }}>
-                Semnează aici. Pentru PDF trebuie să dai <b>Save</b>.
-              </div>
-
-              <div style={{ marginTop: 10, border: "1px solid #e3e3e3", borderRadius: 12, overflow: "hidden" }}>
-                <canvas
-                  ref={sig.canvasRef}
-                  style={{ width: "100%", height: 140, display: "block", background: "#fff" }}
-                  onPointerDown={sig.start}
-                  onPointerMove={sig.move}
-                  onPointerUp={sig.end}
-                  onPointerLeave={sig.end}
-                />
-              </div>
-
-              {signatureDataUrl ? (
-                <div style={{ marginTop: 8, fontSize: 12, color: "#1a73e8" }}>Signature saved ✅</div>
-              ) : (
-                <div style={{ marginTop: 8, fontSize: 12, color: "#999" }}>No saved signature</div>
-              )}
             </div>
+
+            <button onClick={clearDay} style={{ ...smallBtn, borderColor: "#f0bcbc", color: "#b55" }} disabled={isLocked}>
+              Clear day
+            </button>
           </div>
 
-          {/* Editor */}
-          <div style={styles.cardPad}>
-            {!selectedDay ? (
-              <div style={{ color: "#666" }}>Selectează o zi.</div>
-            ) : (
-              <>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-                  <div>
-                    <div style={{ fontSize: 18, fontWeight: 900 }}>{niceDate(selectedDay)}</div>
-                    <div style={{ color: "#666", fontSize: 13 }}>Date: {selectedISO}</div>
+          <div style={{ marginTop: 18 }}>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 10 }}>Work</div>
 
-                    {payInfoForSelectedDay ? (
-                      <div style={{ marginTop: 10, fontSize: 13, color: "#444", lineHeight: 1.35 }}>
-                        <div><b>ISO Week:</b> W{payInfoForSelectedDay.isoWeek} ({payInfoForSelectedDay.isoYear})</div>
-                        {payInfoForSelectedDay.period ? (
-                          <>
-                            <div><b>Pay Period:</b> {payInfoForSelectedDay.period.year} P{payInfoForSelectedDay.period.period} ({payInfoForSelectedDay.period.month})</div>
-                            <div><b>Weeks:</b> {payInfoForSelectedDay.period.weekStart}–{payInfoForSelectedDay.period.weekEnd}</div>
-                            <div><b>Invoice date:</b> {payInfoForSelectedDay.period.invoiceDate}</div>
-                          </>
-                        ) : (
-                          <div style={{ color: "#999" }}>No pay period found</div>
-                        )}
-                      </div>
-                    ) : null}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: 12 }}>
+              <label>
+                <div style={lbl}>Work type</div>
+                <select
+                  value={currentEntry.workType}
+                  disabled={isLocked}
+                  onChange={(e) => setEntry({ workType: e.target.value as WorkType })}
+                  style={input}
+                >
+                  {WORK_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-                    {isSelectedDayLocked ? (
-                      <div style={{ marginTop: 10, padding: 10, borderRadius: 12, background: "#fff5f5", border: "1px solid #f1c4c4", color: "#b42318", fontSize: 13, fontWeight: 800 }}>
-                        LOCKED period → read-only
-                      </div>
-                    ) : null}
-                  </div>
+              <label>
+                <div style={lbl}>Hours</div>
+                <input
+                  value={currentEntry.hours}
+                  disabled={isLocked}
+                  onChange={(e) => setEntry({ hours: clampNum(e.target.value, 0) })}
+                  type="number"
+                  min={0}
+                  step="0.25"
+                  style={input}
+                />
+              </label>
+            </div>
 
-                  {!isSelectedDayLocked && (
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button style={styles.btnDanger} onClick={clearDay}>Clear day</button>
-                    </div>
-                  )}
-                </div>
+            <div style={{ marginTop: 10, opacity: 0.6 }}>Rate/Pay are not calculated (each person has different rate).</div>
 
-                <div style={styles.sectionTitle}>Work</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div>
-                    <div style={styles.label}>Work type</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 14 }}>
+              <label>
+                <div style={lbl}>Location</div>
+                <input
+                  value={currentEntry.location}
+                  disabled={isLocked}
+                  onChange={(e) => setEntry({ location: e.target.value })}
+                  placeholder="ex: Borssele"
+                  style={input}
+                />
+              </label>
+
+              <label>
+                <div style={lbl}>Service Worker</div>
+                <input
+                  value={currentEntry.serviceWorker}
+                  disabled={isLocked}
+                  onChange={(e) => setEntry({ serviceWorker: e.target.value })}
+                  placeholder="ex: 67008943"
+                  style={input}
+                />
+              </label>
+            </div>
+
+            <label style={{ display: "block", marginTop: 14 }}>
+              <div style={lbl}>How / Work done</div>
+              <input
+                value={currentEntry.workDone}
+                disabled={isLocked}
+                onChange={(e) => setEntry({ workDone: e.target.value })}
+                placeholder="HV test, torque check..."
+                style={input}
+              />
+            </label>
+
+            <label style={{ display: "block", marginTop: 14 }}>
+              <div style={lbl}>Comment</div>
+              <input
+                value={currentEntry.comment}
+                disabled={isLocked}
+                onChange={(e) => setEntry({ comment: e.target.value })}
+                placeholder="notes..."
+                style={input}
+              />
+            </label>
+
+            {/* Expenses */}
+            <div style={{ marginTop: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 18, fontWeight: 800 }}>Expenses</div>
+                <button onClick={addExpense} style={smallBtn} disabled={isLocked}>
+                  + Add
+                </button>
+              </div>
+
+              <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                {(currentEntry.expenses || []).map((ex) => (
+                  <div
+                    key={ex.id}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "220px 140px 1fr 80px",
+                      gap: 10,
+                      alignItems: "center",
+                    }}
+                  >
                     <select
-                      value={current.workType}
-                      onChange={(e) => updateCurrent({ workType: e.target.value as WorkType })}
-                      style={styles.input}
-                      disabled={isSelectedDayLocked}
+                      value={ex.type}
+                      disabled={isLocked}
+                      onChange={(e) => updateExpense(ex.id, { type: e.target.value as ExpenseType })}
+                      style={input}
                     >
-                      {WORK_TYPES.map((t) => (
-                        <option key={t} value={t}>{t}</option>
+                      {EXP_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
                       ))}
                     </select>
-                    <div style={{ marginTop: 6, fontSize: 12, color: "#666" }}>
-                      Rate: <b>{fmtEUR(currentRate)}</b> ({currentMode === "hourly" ? "per hour" : "flat"})
-                      {" "}• Day pay: <b>{fmtEUR(currentPay)}</b>
-                    </div>
-                  </div>
 
-                  <div>
-                    <div style={styles.label}>Hours</div>
                     <input
                       type="number"
                       min={0}
-                      step={0.25}
-                      value={current.hours}
-                      onChange={(e) => updateCurrent({ hours: Number(e.target.value) })}
-                      style={styles.input}
-                      disabled={isSelectedDayLocked}
+                      step="0.01"
+                      value={ex.amount}
+                      disabled={isLocked}
+                      onChange={(e) => updateExpense(ex.id, { amount: clampNum(e.target.value, 0) })}
+                      style={input}
+                      placeholder="Amount"
                     />
-                  </div>
 
-                  <div>
-                    <div style={styles.label}>Location</div>
                     <input
-                      value={current.location}
-                      onChange={(e) => updateCurrent({ location: e.target.value })}
-                      style={styles.input}
-                      disabled={isSelectedDayLocked}
-                      placeholder="Site / Turbine / Port"
+                      value={ex.note}
+                      disabled={isLocked}
+                      onChange={(e) => updateExpense(ex.id, { note: e.target.value })}
+                      style={input}
+                      placeholder="note..."
                     />
+
+                    <button onClick={() => removeExpense(ex.id)} style={{ ...smallBtn, borderColor: "#eee" }} disabled={isLocked}>
+                      ✕
+                    </button>
                   </div>
+                ))}
 
-                  <div>
-                    <div style={styles.label}>Service Worker</div>
-                    <input
-                      value={current.serviceWorker}
-                      onChange={(e) => updateCurrent({ serviceWorker: e.target.value })}
-                      style={styles.input}
-                      disabled={isSelectedDayLocked}
-                      placeholder="SW 6231482"
-                    />
-                  </div>
+                {(currentEntry.expenses || []).length === 0 && <div style={{ opacity: 0.65 }}>No expenses for this day.</div>}
+              </div>
 
-                  <div style={{ gridColumn: "1 / -1" }}>
-                    <div style={styles.label}>How / Work done</div>
-                    <input
-                      value={current.how}
-                      onChange={(e) => updateCurrent({ how: e.target.value })}
-                      style={styles.input}
-                      disabled={isSelectedDayLocked}
-                      placeholder="HV test, torque check..."
-                    />
-                  </div>
+              {/* Vessel / Jack-up (under Expenses) */}
+              <div style={{ marginTop: 16, padding: 14, borderRadius: 14, border: "1px solid #eee" }}>
+                <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 10 }}>Vessel / Jack-up</div>
 
-                  <div style={{ gridColumn: "1 / -1" }}>
-                    <div style={styles.label}>Comment</div>
-                    <input
-                      value={current.comment}
-                      onChange={(e) => updateCurrent({ comment: e.target.value })}
-                      style={styles.input}
-                      disabled={isSelectedDayLocked}
-                      placeholder="notes..."
-                    />
-                  </div>
-                </div>
-
-                <div style={styles.sectionTitle}>Expenses</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                  <ExpenseField label="Taxi (€)" value={current.expenses.taxi} onChange={(v) => updateExpenses({ taxi: v })} disabled={isSelectedDayLocked} />
-                  <ExpenseField label="Hotel (€)" value={current.expenses.hotel} onChange={(v) => updateExpenses({ hotel: v })} disabled={isSelectedDayLocked} />
-                  <ExpenseField label="Food (€)" value={current.expenses.food} onChange={(v) => updateExpenses({ food: v })} disabled={isSelectedDayLocked} />
-                  <ExpenseField label="Diesel (€)" value={current.expenses.diesel} onChange={(v) => updateExpenses({ diesel: v })} disabled={isSelectedDayLocked} />
-                  <ExpenseField label="PPE (€)" value={current.expenses.ppe} onChange={(v) => updateExpenses({ ppe: v })} disabled={isSelectedDayLocked} />
-                  <ExpenseField label="Other (€)" value={current.expenses.other} onChange={(v) => updateExpenses({ other: v })} disabled={isSelectedDayLocked} />
-                </div>
-
-                <div style={{ marginTop: 10 }}>
-                  <div style={styles.label}>Expenses note</div>
-                  <input
-                    value={current.expenses.note}
-                    onChange={(e) => updateExpenses({ note: e.target.value })}
-                    style={styles.input}
-                    disabled={isSelectedDayLocked}
-                  />
-                </div>
-
-                <div style={{ marginTop: 10, color: "#666", fontSize: 13 }}>
-                  Total expenses day: <b>{fmtEUR(sumExpenses(current.expenses))}</b>
-                </div>
-
-                {/* NEW Vessel */}
-                <div style={styles.sectionTitle}>Vessel / Jack-up</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div>
-                    <div style={styles.label}>Vessel (preset)</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <label>
+                    <div style={lbl}>Platform</div>
                     <select
-                      value={vesselPreset}
-                      onChange={(e) => {
-                        const v = e.target.value as any;
-                        setVesselPreset(v);
-                        if (v === "") updateCurrent({ vessel: "" });
-                        else if (v !== "Other (type manually)") updateCurrent({ vessel: v });
-                      }}
-                      style={styles.input}
-                      disabled={isSelectedDayLocked}
+                      value={currentEntry.platformType}
+                      disabled={isLocked}
+                      onChange={(e) => setEntry({ platformType: e.target.value as PlatformType })}
+                      style={input}
                     >
-                      {VESSELS_PRESET.map((v) => (
-                        <option key={v} value={v}>{v || "—"}</option>
+                      {PLATFORM_TYPES.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
                       ))}
                     </select>
-                  </div>
+                  </label>
 
-                  <div>
-                    <div style={styles.label}>Vessel (manual)</div>
-                    <input
-                      value={current.vessel}
+                  <div />
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+                  <label>
+                    <div style={lbl}>Vessel (preset)</div>
+                    <select
+                      value={currentEntry.vesselPreset}
+                      disabled={isLocked}
                       onChange={(e) => {
-                        updateCurrent({ vessel: e.target.value });
-                        setVesselPreset("Other (type manually)");
+                        const v = e.target.value;
+                        setEntry({ vesselPreset: v, vesselManual: currentEntry.vesselManual?.trim() ? currentEntry.vesselManual : v });
                       }}
-                      style={styles.input}
-                      disabled={isSelectedDayLocked}
-                      placeholder="ex: Blue Tern / Discovery Wind / Apollo Wind"
+                      style={input}
+                    >
+                      {VESSEL_PRESETS.map((v) => (
+                        <option key={v} value={v}>
+                          {v}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    <div style={lbl}>Vessel (manual)</div>
+                    <input
+                      value={currentEntry.vesselManual}
+                      disabled={isLocked}
+                      onChange={(e) => setEntry({ vesselManual: e.target.value })}
+                      placeholder="ex: Blue Tern"
+                      style={input}
                     />
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* PDF layout hidden */}
-        <div style={{ position: "absolute", left: -99999, top: 0 }}>
-          <div ref={pdfRef} style={{ width: 794, padding: 24, fontFamily: "Arial, sans-serif", background: "#fff", color: "#111" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 20 }}>
-              <div>
-                <div style={{ fontSize: 22, fontWeight: 900 }}>Timesheet</div>
-                <div style={{ marginTop: 4, fontSize: 14 }}>
-                  Period: <b>{selectedPeriodObj ? `${selectedPeriodObj.year} P${selectedPeriodObj.period} (${selectedPeriodObj.month})` : "-"}</b>
-                </div>
-                <div style={{ marginTop: 4, fontSize: 14 }}>
-                  Weeks: <b>{selectedPeriodObj ? `${selectedPeriodObj.weekStart}–${selectedPeriodObj.weekEnd}` : "-"}</b>
-                </div>
-                <div style={{ marginTop: 4, fontSize: 14 }}>
-                  Invoice date: <b>{selectedPeriodObj ? selectedPeriodObj.invoiceDate : "-"}</b>
-                </div>
-                <div style={{ marginTop: 6, fontSize: 14 }}>
-                  Submitted by: <b>{email || "-"}</b>
-                </div>
-              </div>
-
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 14 }}>Total hours: <b>{periodTotals.hours.toFixed(2)}</b></div>
-                <div style={{ fontSize: 14 }}>Total expenses: <b>{fmtEUR(periodTotals.expenses)}</b></div>
-                <div style={{ fontSize: 14 }}>Total pay: <b>{fmtEUR(periodTotals.pay)}</b></div>
-                <div style={{ marginTop: 6, fontSize: 11, color: "#666" }}>Generated: {new Date().toLocaleString()}</div>
-              </div>
-            </div>
-
-            <div style={{ marginTop: 12, borderTop: "1px solid #ddd" }} />
-
-            <div style={{ marginTop: 12, fontSize: 16, fontWeight: 900 }}>Pay Rates</div>
-            <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 8, fontSize: 11 }}>
-              <thead>
-                <tr>
-                  {["Work type", "Rate", "Mode"].map((h) => (
-                    <th key={h} style={{ border: "1px solid #ddd", padding: "6px", background: "#f5f7fb", textAlign: "left" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {WORK_TYPES.filter((t) => t !== "OFF / Rest").map((t) => (
-                  <tr key={t}>
-                    <td style={td()}>{t}</td>
-                    <td style={td()}>{fmtEUR(PAY_RULES[t].rate)}</td>
-                    <td style={td()}>{PAY_RULES[t].mode === "hourly" ? "per hour" : "flat"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            <div style={{ marginTop: 12, borderTop: "1px solid #ddd" }} />
-
-            <div style={{ marginTop: 12, fontSize: 16, fontWeight: 900 }}>Entries (Selected Period)</div>
-
-            <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 10, fontSize: 10.5 }}>
-              <thead>
-                <tr>
-                  {["Date", "ISO", "Work type", "Vessel", "Location", "Hours", "Rate", "Pay", "SW", "Expenses", "Expense note", "Work note"].map((h) => (
-                    <th key={h} style={{ border: "1px solid #ddd", padding: "6px", background: "#f5f7fb", textAlign: "left" }}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {periodEntries
-                  .slice()
-                  .sort((a, b) => a.dateISO.localeCompare(b.dateISO))
-                  .map((e) => {
-                    const { isoWeek } = getISOWeek(fromISO(e.dateISO));
-                    const exTotal = sumExpenses(e.expenses);
-                    const rule = PAY_RULES[e.workType] ?? { rate: 0, mode: "flat" as const };
-                    const pay = calcPayEUR(e);
-                    return (
-                      <tr key={e.dateISO}>
-                        <td style={td()}>{e.dateISO}</td>
-                        <td style={td()}>{`W${isoWeek}`}</td>
-                        <td style={td()}>{e.workType}</td>
-                        <td style={td()}>{e.vessel || ""}</td>
-                        <td style={td()}>{e.location}</td>
-                        <td style={td()}>{Number(e.hours || 0).toFixed(2)}</td>
-                        <td style={td()}>{fmtEUR(rule.rate)} {rule.mode === "hourly" ? "/h" : ""}</td>
-                        <td style={td()}>{fmtEUR(pay)}</td>
-                        <td style={td()}>{e.serviceWorker}</td>
-                        <td style={td()}>{fmtEUR(exTotal)}</td>
-                        <td style={td()}>{e.expenses.note || ""}</td>
-                        <td style={td()}>{e.comment || e.how || ""}</td>
-                      </tr>
-                    );
-                  })}
-              </tbody>
-            </table>
-
-            <div style={{ marginTop: 16, display: "flex", justifyContent: "space-between", gap: 20 }}>
-              <div style={{ width: "60%" }}>
-                <div style={{ fontSize: 13, fontWeight: 900 }}>Totals</div>
-                <div style={{ fontSize: 12, marginTop: 6 }}>Hours: <b>{periodTotals.hours.toFixed(2)}</b></div>
-                <div style={{ fontSize: 12, marginTop: 4 }}>Expenses: <b>{fmtEUR(periodTotals.expenses)}</b></div>
-                <div style={{ fontSize: 12, marginTop: 4 }}>Pay: <b>{fmtEUR(periodTotals.pay)}</b></div>
-              </div>
-
-              <div style={{ width: "40%", textAlign: "right" }}>
-                <div style={{ fontSize: 13, fontWeight: 900 }}>Signature</div>
-                <div style={{ marginTop: 8, border: "1px solid #ddd", height: 90, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  {signatureDataUrl ? (
-                    <img src={signatureDataUrl} alt="signature" style={{ maxWidth: "100%", maxHeight: "100%" }} />
-                  ) : (
-                    <span style={{ color: "#999", fontSize: 12 }}>No signature</span>
-                  )}
+                  </label>
                 </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <style>{`
-          .markedDay .rdp-day_button{ position: relative; }
-          .markedDay .rdp-day_button::after{
-            content: "";
-            position: absolute;
-            width: 7px; height: 7px;
-            border-radius: 999px;
-            left: 50%;
-            transform: translateX(-50%);
-            bottom: 4px;
-            background: #1a73e8;
-          }
-        `}</style>
+          {isLocked && (
+            <div style={{ marginTop: 16, padding: 12, borderRadius: 12, border: "1px solid #f0bcbc", color: "#b55" }}>
+              This month is locked. Use “Unlock (Admin)” to edit.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-function ExpenseField(props: { label: string; value: number; onChange: (v: number) => void; disabled?: boolean }) {
+/** --------- SMALL UI COMPONENTS / STYLES ---------- */
+
+function Card({ title, big, children }: { title: string; big: string; children?: React.ReactNode }) {
   return (
-    <div>
-      <div style={styles.label}>{props.label}</div>
-      <input
-        type="number"
-        min={0}
-        step={0.01}
-        value={props.value}
-        onChange={(e) => props.onChange(Number(e.target.value))}
-        style={styles.input}
-        disabled={props.disabled}
-      />
+    <div style={{ border: "1px solid #eee", background: "white", borderRadius: 14, padding: 16 }}>
+      <div style={{ opacity: 0.75, marginBottom: 6 }}>{title}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 8 }}>{big}</div>
+      <div style={{ opacity: 0.85 }}>{children}</div>
     </div>
   );
 }
 
-function td(): React.CSSProperties {
-  return { border: "1px solid #ddd", padding: "6px", verticalAlign: "top" };
-}
-
-const styles: Record<string, React.CSSProperties> = {
-  page: { maxWidth: 1260, margin: "0 auto", padding: 16, position: "relative" },
-  overlay: { background: "rgba(255,255,255,0.82)", borderRadius: 18, padding: 12, minHeight: "calc(100vh - 32px)" },
-
-  topbar: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 12,
-    padding: 14,
-    borderRadius: 14,
-    background: "#fff",
-    boxShadow: "0 8px 20px rgba(0,0,0,0.06)",
-    alignItems: "flex-start",
-    flexWrap: "wrap",
-  },
-
-  summaryRow: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginTop: 12 },
-  grid: { display: "grid", gridTemplateColumns: "420px 1fr", gap: 12, marginTop: 12 },
-
-  card: { background: "#fff", borderRadius: 14, padding: 14, boxShadow: "0 8px 20px rgba(0,0,0,0.06)" },
-  cardPad: { background: "#fff", borderRadius: 14, padding: 14, boxShadow: "0 8px 20px rgba(0,0,0,0.06)" },
-
-  label: { fontSize: 12, color: "#666", marginBottom: 6 },
-  value: { fontSize: 20, fontWeight: 900, marginTop: 6 },
-
-  input: { width: "100%", padding: "10px 12px", border: "1px solid #e3e3e3", borderRadius: 10, outline: "none" },
-
-  btn: { border: "1px solid #ddd", background: "#fff", padding: "8px 10px", borderRadius: 10, cursor: "pointer" },
-  btnPrimary: { border: "1px solid #1a73e8", background: "#1a73e8", color: "#fff", padding: "8px 10px", borderRadius: 10, cursor: "pointer" },
-  btnDanger: { border: "1px solid #f1c4c4", background: "#fff5f5", padding: "8px 10px", borderRadius: 10, cursor: "pointer" },
-  btnSubmit: { border: "1px solid #0b7a2a", background: "#0b7a2a", color: "#fff", padding: "8px 10px", borderRadius: 10, cursor: "pointer" },
-
-  sectionTitle: { marginTop: 16, marginBottom: 8, fontSize: 14, fontWeight: 900 },
+const input: React.CSSProperties = {
+  width: "100%",
+  padding: 12,
+  borderRadius: 12,
+  border: "1px solid #ddd",
+  fontFamily: "inherit",
+  fontSize: 16,
 };
+
+const lbl: React.CSSProperties = {
+  opacity: 0.8,
+  marginBottom: 6,
+};
+
+const smallBtn: React.CSSProperties = {
+  padding: "10px 12px",
+  borderRadius: 12,
+  border: "1px solid #ddd",
+  background: "white",
+  cursor: "pointer",
+  fontWeight: 700,
+};
+
+const iconBtn: React.CSSProperties = {
+  width: 40,
+  height: 40,
+  borderRadius: 999,
+  border: "1px solid #ddd",
+  background: "white",
+  cursor: "pointer",
+  fontSize: 22,
+  lineHeight: "40px",
+  textAlign: "center",
+};
+
+function dotStyle(xOffset: number): React.CSSProperties {
+  return {
+    position: "absolute",
+    bottom: 6,
+    left: "50%",
+    transform: `translateX(calc(-50% + ${xOffset}px))`,
+    width: 6,
+    height: 6,
+    borderRadius: 999,
+    background: "#1f5eff",
+  };
+}
