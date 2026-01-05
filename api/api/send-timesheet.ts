@@ -22,38 +22,40 @@ export default async function handler(req: any, res: any) {
     const key = process.env.RESEND_API_KEY;
     if (!key) return res.status(500).send("Missing RESEND_API_KEY");
 
-    const resend = new Resend(key);
-
     const body: Payload = req.body;
 
-    if (!body?.to || !body?.submittedBy) return res.status(400).send("Missing fields");
+    if (!body?.to) return res.status(400).send("Missing 'to'");
+    if (!body?.submittedBy) return res.status(400).send("Missing 'submittedBy'");
+    if (!body?.period?.id) return res.status(400).send("Missing period");
 
-    const textLines = [
-      `WindPro TimeSheet submission`,
-      ``,
+    const resend = new Resend(key);
+
+    const pdfBuffer = Buffer.from(body.pdfBase64 || "", "base64");
+    if (!pdfBuffer.length) return res.status(400).send("Missing PDF");
+
+    const text = [
+      "WindPro TimeSheet submission",
+      "",
       `Submitted by: ${body.submittedBy}`,
       `Name: ${body.name || "-"}`,
-      `Period: ${body.period?.label} (${body.period?.startISO} → ${body.period?.endISO})`,
-      `Invoice date: ${body.period?.invoiceDateISO}`,
-      ``,
+      `Period: ${body.period.label} (${body.period.startISO} → ${body.period.endISO})`,
+      `Invoice date: ${body.period.invoiceDateISO}`,
+      "",
       `Total hours: ${Number(body.totals?.hours ?? 0).toFixed(2)}`,
       `Total expenses: € ${Number(body.totals?.expenses ?? 0).toFixed(2)}`,
-      ``,
-      `Entries count: ${Array.isArray(body.entries) ? body.entries.length : 0}`,
-      ``,
-      `PDF is attached.`,
+      `Entries: ${Array.isArray(body.entries) ? body.entries.length : 0}`,
+      "",
+      "PDF attached.",
     ].join("\n");
 
-    const pdfBuffer = Buffer.from(body.pdfBase64, "base64");
-
     await resend.emails.send({
-      from: "WindPro Timesheet <onboarding@resend.dev>", // poți schimba după ce setezi domeniu în Resend
+      from: "WindPro Timesheet <onboarding@resend.dev>",
       to: [body.to],
-      subject: `Timesheet ${body.period?.id} — ${body.submittedBy}`,
-      text: textLines,
+      subject: `Timesheet ${body.period.id} — ${body.submittedBy}`,
+      text,
       attachments: [
         {
-          filename: body.pdfFileName || `WindPro_TimeSheet_${body.period?.id}.pdf`,
+          filename: body.pdfFileName || `WindPro_TimeSheet_${body.period.id}.pdf`,
           content: pdfBuffer,
         },
       ],

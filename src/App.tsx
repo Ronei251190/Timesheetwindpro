@@ -52,6 +52,11 @@ type Period = {
   invoiceDateISO: string;
 };
 
+type StoredUser = {
+  entries: Record<string, DayEntry>;
+  signatureDataUrl: string | null;
+};
+
 type AppState = {
   loginEmail: string;
   loginName: string;
@@ -62,11 +67,15 @@ type AppState = {
   entries: Record<string, DayEntry>;
   signatureDataUrl: string | null;
   lockedPeriodIds: string[];
+
+  // local colleague storage
+  colleagues: string[];
+  users: Record<string, StoredUser>;
 };
 
 /** ---------------- CONFIG ---------------- */
 
-const LS_KEY = "windpro_timesheet_final_v2";
+const LS_KEY = "windpro_timesheet_final_v3";
 const ADMIN_PASSWORD = "1234"; // schimbă tu
 const COLLECTOR_EMAIL = "borot@windpro.pl";
 
@@ -88,22 +97,13 @@ const WORK_TYPES: WorkType[] = [
   "Site Manager",
   "Service",
   "Driving to site from home",
-  "Driving to site from home", // (safe duplicate? better remove) -> removed below
   "Driving from site to home",
-].filter((v, i, a) => a.indexOf(v) === i) as WorkType[];
+];
 
 const EXP_TYPES: ExpenseType[] = ["Taxi", "Hotel", "Food", "Diesel", "Extra luggage", "PPE", "Other"];
 const PLATFORM_TYPES: PlatformType[] = ["SOV", "Jack-up", "CTV / Harbour", "N/A"];
 
-const VESSEL_PRESETS = [
-  "Blue Tern",
-  "Discovery Wind",
-  "Apollo Wind",
-  "Nobelwind",
-  "Aeolus",
-  "SOV (Other)",
-  "Jack-up (Other)",
-];
+const VESSEL_PRESETS = ["Blue Tern", "Discovery Wind", "Apollo Wind", "Nobelwind", "Aeolus", "SOV (Other)", "Jack-up (Other)"];
 
 /** ---------------- HELPERS ---------------- */
 
@@ -194,16 +194,22 @@ const DEFAULT_STATE: AppState = {
   entries: {},
   signatureDataUrl: null,
   lockedPeriodIds: [],
+  colleagues: [COLLECTOR_EMAIL],
+  users: {},
 };
 
 function loadState(): AppState {
   const s = safeParse<AppState>(localStorage.getItem(LS_KEY), DEFAULT_STATE);
-  return {
+  const merged: AppState = {
     ...DEFAULT_STATE,
     ...s,
     entries: s.entries || {},
     lockedPeriodIds: s.lockedPeriodIds || [],
+    colleagues: s.colleagues?.length ? s.colleagues : DEFAULT_STATE.colleagues,
+    users: s.users || {},
   };
+  if (!merged.colleagues.includes(COLLECTOR_EMAIL)) merged.colleagues = [...merged.colleagues, COLLECTOR_EMAIL];
+  return merged;
 }
 function saveState(s: AppState) {
   localStorage.setItem(LS_KEY, JSON.stringify(s));
@@ -303,6 +309,8 @@ export default function App() {
   // submit dropdown + copy mode
   const [submitMenuOpen, setSubmitMenuOpen] = useState(false);
   const submitMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // copy mode persistent
   const [copyDayMode, setCopyDayMode] = useState(false);
 
   // email status
@@ -510,7 +518,6 @@ export default function App() {
     doc.text("Entries (Selected Period)", margin, y);
     y += 14;
 
-    // Table
     const tableX = margin;
     const tableW = contentW;
 
@@ -633,7 +640,6 @@ export default function App() {
       y += rowH;
     }
 
-    // Totals + Signature
     y += 22;
     if (y + 110 > pageH) {
       doc.addPage();
@@ -695,6 +701,34 @@ export default function App() {
     }
   };
 
+  /** ------- Copy colleague (local) ------- */
+  const copyMyColleague = () => {
+    setSubmitMenuOpen(false);
+
+    const email = normalizeEmail(window.prompt("Colleague email:", COLLECTOR_EMAIL) || "");
+    if (!email) return;
+
+    // copy selected period entries only
+    const periodOnly: Record<string, DayEntry> = {};
+    for (const [dateISO, entry] of Object.entries(state.entries)) {
+      if (inRangeISO(dateISO, selectedPeriod.startISO, selectedPeriod.endISO)) {
+        periodOnly[dateISO] = JSON.parse(JSON.stringify(entry));
+      }
+    }
+
+    setState((prev) => {
+      const users = { ...prev.users };
+      if (!users[email]) users[email] = { entries: {}, signatureDataUrl: null };
+      users[email] = { ...users[email], entries: { ...users[email].entries, ...periodOnly } };
+
+      const colleagues = prev.colleagues.includes(email) ? prev.colleagues : [...prev.colleagues, email];
+
+      return { ...prev, users, colleagues };
+    });
+
+    alert(`Copied this period → ${email} (local).`);
+  };
+
   /** ------- SUBMIT MENU ACTIONS ------- */
   const submitExportLockAndEmail = async () => {
     setSubmitMenuOpen(false);
@@ -719,10 +753,10 @@ export default function App() {
       a.remove();
       URL.revokeObjectURL(url);
 
-      // send email to collector
+      // send email
       await sendToCollectorEmail(pdfBuf);
 
-      // lock period
+      // lock
       lockPeriod();
 
       alert("Submit OK ✅ PDF generated + sent to collector email.");
@@ -736,22 +770,25 @@ export default function App() {
   const enterCopyDayMode = () => {
     setSubmitMenuOpen(false);
     if (isLocked) return;
-    setCopyDayMode(true);
+    setCopyDayMode(true); // stays ON until Cancel
   };
 
-  /** ------- Calendar day click (Copy mode = click target) ------- */
+  /** ------- Calendar day click (Copy mode persistent) ------- */
   const onCalendarPick = (targetISO: string) => {
     if (copyDayMode) {
       if (isLocked) return;
+
       setState((prev) => {
         const srcISO = prev.selectedDateISO;
         const src = prev.entries[srcISO] || makeDefaultEntry(srcISO);
         const copied: DayEntry = { ...JSON.parse(JSON.stringify(src)), dateISO: targetISO };
         return { ...prev, entries: { ...prev.entries, [targetISO]: copied }, selectedDateISO: targetISO };
       });
-      setCopyDayMode(false);
+
+      // IMPORTANT: NU iesim din copy mode -> poti selecta mai multe zile
       return;
     }
+
     setState((p) => ({ ...p, selectedDateISO: targetISO }));
   };
 
@@ -826,7 +863,7 @@ export default function App() {
                 position: "absolute",
                 right: 0,
                 top: "calc(100% + 8px)",
-                width: 280,
+                width: 300,
                 background: "white",
                 border: "1px solid #e6e6e6",
                 borderRadius: 12,
@@ -836,7 +873,9 @@ export default function App() {
               }}
             >
               <MenuItem onClick={submitExportLockAndEmail}>Submit (Export + Lock + Email)</MenuItem>
-              <MenuItem onClick={enterCopyDayMode}>Copy my day (click calendar)</MenuItem>
+              <MenuItem onClick={enterCopyDayMode}>Copy my day (multi-select)</MenuItem>
+              <MenuItem onClick={copyMyColleague}>Copy my colleague (period)</MenuItem>
+
               <div style={{ padding: 10, borderTop: "1px solid #eee", fontSize: 12, opacity: 0.75 }}>
                 Sends to: <b>{COLLECTOR_EMAIL}</b>
               </div>
@@ -866,16 +905,10 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <div style={{ fontSize: 24, fontWeight: 700 }}>{monthLabel}</div>
             <div style={{ display: "flex", gap: 10 }}>
-              <button
-                onClick={() => setState((p) => ({ ...p, selectedDateISO: format(subMonths(selectedDate, 1), "yyyy-MM-dd") }))}
-                style={iconBtn}
-              >
+              <button onClick={() => setState((p) => ({ ...p, selectedDateISO: format(subMonths(selectedDate, 1), "yyyy-MM-dd") }))} style={iconBtn}>
                 ‹
               </button>
-              <button
-                onClick={() => setState((p) => ({ ...p, selectedDateISO: format(addMonths(selectedDate, 1), "yyyy-MM-dd") }))}
-                style={iconBtn}
-              >
+              <button onClick={() => setState((p) => ({ ...p, selectedDateISO: format(addMonths(selectedDate, 1), "yyyy-MM-dd") }))} style={iconBtn}>
                 ›
               </button>
             </div>
@@ -889,14 +922,14 @@ export default function App() {
                 borderRadius: 12,
                 border: "1px solid #ffe0a3",
                 background: "#fff7e6",
-                fontWeight: 800,
+                fontWeight: 900,
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
                 gap: 10,
               }}
             >
-              <span>Copy mode: click a day to paste.</span>
+              <span>Copy mode ON: click multiple days to paste. (Cancel to stop)</span>
               <button onClick={() => setCopyDayMode(false)} style={{ ...smallBtn, padding: "8px 10px" }}>
                 Cancel
               </button>
@@ -1007,12 +1040,7 @@ export default function App() {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: 12 }}>
               <label>
                 <div style={lbl}>Work type</div>
-                <select
-                  value={currentEntry.workType}
-                  disabled={isLocked}
-                  onChange={(e) => setEntry({ workType: e.target.value as WorkType })}
-                  style={input}
-                >
+                <select value={currentEntry.workType} disabled={isLocked} onChange={(e) => setEntry({ workType: e.target.value as WorkType })} style={input}>
                   {WORK_TYPES.map((t) => (
                     <option key={t} value={t}>
                       {t}
@@ -1023,62 +1051,30 @@ export default function App() {
 
               <label>
                 <div style={lbl}>Hours</div>
-                <input
-                  value={currentEntry.hours}
-                  disabled={isLocked}
-                  onChange={(e) => setEntry({ hours: clampNum(e.target.value, 0) })}
-                  type="number"
-                  min={0}
-                  step="0.25"
-                  style={input}
-                />
+                <input value={currentEntry.hours} disabled={isLocked} onChange={(e) => setEntry({ hours: clampNum(e.target.value, 0) })} type="number" min={0} step="0.25" style={input} />
               </label>
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 14 }}>
               <label>
                 <div style={lbl}>Location</div>
-                <input
-                  value={currentEntry.location}
-                  disabled={isLocked}
-                  onChange={(e) => setEntry({ location: e.target.value })}
-                  placeholder="ex: Borssele"
-                  style={input}
-                />
+                <input value={currentEntry.location} disabled={isLocked} onChange={(e) => setEntry({ location: e.target.value })} placeholder="ex: Borssele" style={input} />
               </label>
 
               <label>
                 <div style={lbl}>Service Worker (SW)</div>
-                <input
-                  value={currentEntry.serviceWorker}
-                  disabled={isLocked}
-                  onChange={(e) => setEntry({ serviceWorker: e.target.value })}
-                  placeholder="ex: 67008943"
-                  style={input}
-                />
+                <input value={currentEntry.serviceWorker} disabled={isLocked} onChange={(e) => setEntry({ serviceWorker: e.target.value })} placeholder="ex: 67008943" style={input} />
               </label>
             </div>
 
             <label style={{ display: "block", marginTop: 14 }}>
               <div style={lbl}>Work note</div>
-              <input
-                value={currentEntry.workDone}
-                disabled={isLocked}
-                onChange={(e) => setEntry({ workDone: e.target.value })}
-                placeholder="GBX exchange / HV test / torque check..."
-                style={input}
-              />
+              <input value={currentEntry.workDone} disabled={isLocked} onChange={(e) => setEntry({ workDone: e.target.value })} placeholder="GBX exchange / HV test / torque check..." style={input} />
             </label>
 
             <label style={{ display: "block", marginTop: 14 }}>
               <div style={lbl}>Comment</div>
-              <input
-                value={currentEntry.comment}
-                disabled={isLocked}
-                onChange={(e) => setEntry({ comment: e.target.value })}
-                placeholder="notes..."
-                style={input}
-              />
+              <input value={currentEntry.comment} disabled={isLocked} onChange={(e) => setEntry({ comment: e.target.value })} placeholder="notes..." style={input} />
             </label>
 
             {/* Expenses */}
@@ -1093,12 +1089,7 @@ export default function App() {
               <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
                 {(currentEntry.expenses || []).map((ex) => (
                   <div key={ex.id} style={{ display: "grid", gridTemplateColumns: "220px 140px 1fr 80px", gap: 10, alignItems: "center" }}>
-                    <select
-                      value={ex.type}
-                      disabled={isLocked}
-                      onChange={(e) => updateExpense(ex.id, { type: e.target.value as ExpenseType })}
-                      style={input}
-                    >
+                    <select value={ex.type} disabled={isLocked} onChange={(e) => updateExpense(ex.id, { type: e.target.value as ExpenseType })} style={input}>
                       {EXP_TYPES.map((t) => (
                         <option key={t} value={t}>
                           {t}
@@ -1106,24 +1097,9 @@ export default function App() {
                       ))}
                     </select>
 
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={ex.amount}
-                      disabled={isLocked}
-                      onChange={(e) => updateExpense(ex.id, { amount: clampNum(e.target.value, 0) })}
-                      style={input}
-                      placeholder="Amount"
-                    />
+                    <input type="number" min={0} step="0.01" value={ex.amount} disabled={isLocked} onChange={(e) => updateExpense(ex.id, { amount: clampNum(e.target.value, 0) })} style={input} placeholder="Amount" />
 
-                    <input
-                      value={ex.note}
-                      disabled={isLocked}
-                      onChange={(e) => updateExpense(ex.id, { note: e.target.value })}
-                      style={input}
-                      placeholder="note..."
-                    />
+                    <input value={ex.note} disabled={isLocked} onChange={(e) => updateExpense(ex.id, { note: e.target.value })} style={input} placeholder="note..." />
 
                     <button onClick={() => removeExpense(ex.id)} style={{ ...smallBtn, borderColor: "#eee" }} disabled={isLocked}>
                       ✕
@@ -1139,12 +1115,7 @@ export default function App() {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                   <label>
                     <div style={lbl}>Platform</div>
-                    <select
-                      value={currentEntry.platformType}
-                      disabled={isLocked}
-                      onChange={(e) => setEntry({ platformType: e.target.value as PlatformType })}
-                      style={input}
-                    >
+                    <select value={currentEntry.platformType} disabled={isLocked} onChange={(e) => setEntry({ platformType: e.target.value as PlatformType })} style={input}>
                       {PLATFORM_TYPES.map((p) => (
                         <option key={p} value={p}>
                           {p}
@@ -1163,10 +1134,7 @@ export default function App() {
                       disabled={isLocked}
                       onChange={(e) => {
                         const v = e.target.value;
-                        setEntry({
-                          vesselPreset: v,
-                          vesselManual: trim1(currentEntry.vesselManual) ? currentEntry.vesselManual : v,
-                        });
+                        setEntry({ vesselPreset: v, vesselManual: trim1(currentEntry.vesselManual) ? currentEntry.vesselManual : v });
                       }}
                       style={input}
                     >
@@ -1180,13 +1148,7 @@ export default function App() {
 
                   <label>
                     <div style={lbl}>Vessel (manual)</div>
-                    <input
-                      value={currentEntry.vesselManual}
-                      disabled={isLocked}
-                      onChange={(e) => setEntry({ vesselManual: e.target.value })}
-                      placeholder="ex: Blue Tern"
-                      style={input}
-                    />
+                    <input value={currentEntry.vesselManual} disabled={isLocked} onChange={(e) => setEntry({ vesselManual: e.target.value })} placeholder="ex: Blue Tern" style={input} />
                   </label>
                 </div>
               </div>
