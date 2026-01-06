@@ -909,22 +909,8 @@ export default function App() {
       }}
     >
       TEST EMAIL
-    </button>
-
-
-      {/* TOP BAR */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "540px 1fr auto",
-          gap: 12,
-          alignItems: "center",
-          padding: 14,
-          borderRadius: 14,
-          border: "1px solid #eee",
-          background: "white",
-        }}
-      >
+    <
+        
         {/* Email + Name */}
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", alignItems: "center", gap: 10 }}>
