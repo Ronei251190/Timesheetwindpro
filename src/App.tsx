@@ -157,7 +157,7 @@ function emptyExpenses(): Record<ExpenseCategory, number> {
   };
 }
 
-function ensureEntry(periodKey: string, dateISO: string, existing?: DayEntry): DayEntry {
+function ensureEntry( string, dateISO: string, existing?: DayEntry): DayEntry {
   if (existing) return existing;
   return {
     dateISO,
