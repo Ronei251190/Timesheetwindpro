@@ -5,8 +5,7 @@ import {
   format,
   getDaysInMonth,
   parseISO,
-  startOfMonth,
-  subMonths
+  startOfMonth
   // NOTE: subMonths not needed now, keep simple? we'll use month nav by period dropdown only.
 } from "date-fns";
 import jsPDF from "jspdf";
