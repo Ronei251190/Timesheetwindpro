@@ -1504,7 +1504,7 @@ async function testEmail() {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      to: "borot@windpro.pl",
+      to: "bogdan.bitzy@yahoo.com",
       subject: "Test Timesheet",
       text: "Salut! Test email.",
     }),
