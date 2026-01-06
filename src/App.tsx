@@ -909,8 +909,7 @@ export default function App() {
       }}
     >
       TEST EMAIL
-    <
-        
+    
         {/* Email + Name */}
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", alignItems: "center", gap: 10 }}>
