@@ -1,5 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { addMonths, endOfMonth, format, getDaysInMonth, parseISO, startOfMonth, subMonths } from "date-fns";
+import {
+  addMonths,
+  endOfMonth,
+  format,
+  getDaysInMonth,
+  parseISO,
+  startOfMonth,
+  subMonths,
+} from "date-fns";
 import jsPDF from "jspdf";
 
 /** ---------------- TYPES ---------------- */
@@ -14,7 +22,7 @@ type WorkType =
   | "Standby / On call at home"
   | "Mob / Demob rate"
   | "Overtime"
-  | "Travel (8h x 22€ = 176€) one way"
+  | "Travel (one way)"
   | "Car allowance"
   | "OFF / Rest"
   | "Bank holiday"
@@ -33,10 +41,12 @@ type DayEntry = {
   dateISO: string;
   workType: WorkType;
   hours: number;
+
   location: string;
   serviceWorker: string;
   workDone: string;
   comment: string;
+
   expenses: Expense[];
 
   platformType: PlatformType;
@@ -53,31 +63,26 @@ type Period = {
 };
 
 type StoredUser = {
+  name: string;
+  ratePerHour: number; // individual rate
   entries: Record<string, DayEntry>;
   signatureDataUrl: string | null;
 };
 
 type AppState = {
   loginEmail: string;
-  loginName: string;
-
   selectedPeriodId: string;
   selectedDateISO: string;
 
-  entries: Record<string, DayEntry>;
-  signatureDataUrl: string | null;
   lockedPeriodIds: string[];
-
-  // local colleague storage
-  colleagues: string[];
   users: Record<string, StoredUser>;
 };
 
-/** ---------------- CONFIG ---------------- */
-
-const LS_KEY = "windpro_timesheet_final_v3";
-const ADMIN_PASSWORD = "1234"; // schimbă tu
+const LS_KEY = "windpro_timesheet_v6_full";
+const ADMIN_PASSWORD = "1234"; // schimbi tu
 const COLLECTOR_EMAIL = "borot@windpro.pl";
+
+/** ---------------- CONSTANTS ---------------- */
 
 const WORK_TYPES: WorkType[] = [
   "Offshore (Harbour / CTV) DAY SHIFT",
@@ -89,7 +94,7 @@ const WORK_TYPES: WorkType[] = [
   "Standby / On call at home",
   "Mob / Demob rate",
   "Overtime",
-  "Travel (8h x 22€ = 176€) one way",
+  "Travel (one way)",
   "Car allowance",
   "OFF / Rest",
   "Bank holiday",
@@ -102,7 +107,6 @@ const WORK_TYPES: WorkType[] = [
 
 const EXP_TYPES: ExpenseType[] = ["Taxi", "Hotel", "Food", "Diesel", "Extra luggage", "PPE", "Other"];
 const PLATFORM_TYPES: PlatformType[] = ["SOV", "Jack-up", "CTV / Harbour", "N/A"];
-
 const VESSEL_PRESETS = ["Blue Tern", "Discovery Wind", "Apollo Wind", "Nobelwind", "Aeolus", "SOV (Other)", "Jack-up (Other)"];
 
 /** ---------------- HELPERS ---------------- */
@@ -152,6 +156,9 @@ function makeDefaultEntry(dateISO: string): DayEntry {
     vesselManual: "Blue Tern",
   };
 }
+function makeDefaultUser(): StoredUser {
+  return { name: "", ratePerHour: 0, entries: {}, signatureDataUrl: null };
+}
 function generateMonthlyPeriodsUntil2050(): Period[] {
   const start = new Date(2025, 0, 1);
   const end = new Date(2050, 11, 1);
@@ -174,48 +181,31 @@ function generateMonthlyPeriodsUntil2050(): Period[] {
   }
   return periods;
 }
-function arrayBufferToBase64(buf: ArrayBuffer): string {
-  let binary = "";
-  const bytes = new Uint8Array(buf);
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return btoa(binary);
-}
 
-/** ---------------- STATE ---------------- */
+/** ---------------- STORAGE ---------------- */
 
 const DEFAULT_STATE: AppState = {
   loginEmail: "",
-  loginName: "",
   selectedPeriodId: format(new Date(), "yyyy-MM"),
   selectedDateISO: todayISO(),
-  entries: {},
-  signatureDataUrl: null,
   lockedPeriodIds: [],
-  colleagues: [COLLECTOR_EMAIL],
   users: {},
 };
 
 function loadState(): AppState {
   const s = safeParse<AppState>(localStorage.getItem(LS_KEY), DEFAULT_STATE);
-  const merged: AppState = {
+  return {
     ...DEFAULT_STATE,
     ...s,
-    entries: s.entries || {},
     lockedPeriodIds: s.lockedPeriodIds || [],
-    colleagues: s.colleagues?.length ? s.colleagues : DEFAULT_STATE.colleagues,
     users: s.users || {},
   };
-  if (!merged.colleagues.includes(COLLECTOR_EMAIL)) merged.colleagues = [...merged.colleagues, COLLECTOR_EMAIL];
-  return merged;
 }
 function saveState(s: AppState) {
   localStorage.setItem(LS_KEY, JSON.stringify(s));
 }
 
-/** ---------------- UI HELPERS ---------------- */
+/** ---------------- STYLES ---------------- */
 
 const input: React.CSSProperties = {
   width: "100%",
@@ -225,7 +215,16 @@ const input: React.CSSProperties = {
   fontFamily: "inherit",
   fontSize: 16,
 };
+const strongInput: React.CSSProperties = {
+  width: "100%",
+  padding: 10,
+  borderRadius: 12,
+  border: "2px solid #111",
+  fontFamily: "inherit",
+  fontSize: 16,
+};
 const lbl: React.CSSProperties = { opacity: 0.8, marginBottom: 6 };
+
 const smallBtn: React.CSSProperties = {
   padding: "10px 12px",
   borderRadius: 12,
@@ -234,16 +233,38 @@ const smallBtn: React.CSSProperties = {
   cursor: "pointer",
   fontWeight: 700,
 };
+
+const btnBlue: React.CSSProperties = {
+  padding: "12px 14px",
+  borderRadius: 12,
+  border: "1px solid #1f5eff",
+  background: "#1f5eff",
+  color: "white",
+  fontWeight: 900,
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+};
 const btnGreen: React.CSSProperties = {
   padding: "12px 14px",
   borderRadius: 12,
   border: "1px solid #178a3a",
   background: "#178a3a",
   color: "white",
-  fontWeight: 800,
+  fontWeight: 900,
   cursor: "pointer",
   whiteSpace: "nowrap",
 };
+const btnGreenSplit: React.CSSProperties = {
+  padding: "12px 10px",
+  borderRadius: 12,
+  border: "1px solid #178a3a",
+  background: "#178a3a",
+  color: "white",
+  fontWeight: 900,
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+};
+
 const iconBtn: React.CSSProperties = {
   width: 40,
   height: 40,
@@ -279,43 +300,11 @@ function Card({ title, big, children }: { title: string; big: string; children?:
   );
 }
 
-function MenuItem({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        width: "100%",
-        textAlign: "left",
-        padding: "12px 12px",
-        border: "none",
-        background: "white",
-        cursor: "pointer",
-        fontWeight: 700,
-      }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = "#f6f6f6")}
-      onMouseLeave={(e) => (e.currentTarget.style.background = "white")}
-    >
-      {children}
-    </button>
-  );
-}
-
 /** ---------------- APP ---------------- */
 
 export default function App() {
   const periods = useMemo(() => generateMonthlyPeriodsUntil2050(), []);
   const [state, setState] = useState<AppState>(() => loadState());
-
-  // submit dropdown + copy mode
-  const [submitMenuOpen, setSubmitMenuOpen] = useState(false);
-  const submitMenuRef = useRef<HTMLDivElement | null>(null);
-
-  // copy mode persistent
-  const [copyDayMode, setCopyDayMode] = useState(false);
-
-  // email status
-  const [sending, setSending] = useState(false);
-
   useEffect(() => saveState(state), [state]);
 
   const selectedPeriod = useMemo(
@@ -323,56 +312,88 @@ export default function App() {
     [periods, state.selectedPeriodId]
   );
 
-  const isLocked = useMemo(() => state.lockedPeriodIds.includes(selectedPeriod.id), [state.lockedPeriodIds, selectedPeriod.id]);
+  const isLocked = useMemo(
+    () => state.lockedPeriodIds.includes(selectedPeriod.id),
+    [state.lockedPeriodIds, selectedPeriod.id]
+  );
+
+  const activeEmail = useMemo(() => normalizeEmail(state.loginEmail), [state.loginEmail]);
+
+  const activeUser: StoredUser = useMemo(() => {
+    if (!activeEmail) return makeDefaultUser();
+    return state.users[activeEmail] || makeDefaultUser();
+  }, [state.users, activeEmail]);
+
+  // ensure user exists
+  useEffect(() => {
+    if (!activeEmail) return;
+    setState((prev) => {
+      if (prev.users[activeEmail]) return prev;
+      return { ...prev, users: { ...prev.users, [activeEmail]: makeDefaultUser() } };
+    });
+  }, [activeEmail]);
+
+  const entries = activeUser.entries || {};
 
   const selectedDate = useMemo(() => parseISO(state.selectedDateISO), [state.selectedDateISO]);
   const monthStart = useMemo(() => startOfMonth(selectedDate), [selectedDate]);
   const monthLabel = useMemo(() => format(monthStart, "MMMM yyyy"), [monthStart]);
 
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (!submitMenuOpen) return;
-      const el = submitMenuRef.current;
-      if (el && e.target instanceof Node && !el.contains(e.target)) setSubmitMenuOpen(false);
-    };
-    window.addEventListener("mousedown", onDown);
-    return () => window.removeEventListener("mousedown", onDown);
-  }, [submitMenuOpen]);
-
   const currentEntry: DayEntry = useMemo(
-    () => state.entries[state.selectedDateISO] || makeDefaultEntry(state.selectedDateISO),
-    [state.entries, state.selectedDateISO]
+    () => entries[state.selectedDateISO] || makeDefaultEntry(state.selectedDateISO),
+    [entries, state.selectedDateISO]
   );
 
+  const setUserPatch = (patch: Partial<StoredUser>) => {
+    if (!activeEmail) return;
+    setState((prev) => ({
+      ...prev,
+      users: {
+        ...prev.users,
+        [activeEmail]: { ...(prev.users[activeEmail] || makeDefaultUser()), ...patch },
+      },
+    }));
+  };
+
   const setEntry = (patch: Partial<DayEntry>) => {
-    if (isLocked) return;
+    if (!activeEmail || isLocked) return;
     setState((prev) => {
-      const existing = prev.entries[prev.selectedDateISO] || makeDefaultEntry(prev.selectedDateISO);
+      const u = prev.users[activeEmail] || makeDefaultUser();
+      const existing = u.entries[prev.selectedDateISO] || makeDefaultEntry(prev.selectedDateISO);
       const nextEntry: DayEntry = { ...existing, ...patch };
-      return { ...prev, entries: { ...prev.entries, [prev.selectedDateISO]: nextEntry } };
+      return {
+        ...prev,
+        users: {
+          ...prev.users,
+          [activeEmail]: { ...u, entries: { ...u.entries, [prev.selectedDateISO]: nextEntry } },
+        },
+      };
     });
   };
 
   const clearDay = () => {
-    if (isLocked) return;
+    if (!activeEmail || isLocked) return;
     setState((prev) => {
-      const copy = { ...prev.entries };
+      const u = prev.users[activeEmail] || makeDefaultUser();
+      const copy = { ...u.entries };
       delete copy[prev.selectedDateISO];
-      return { ...prev, entries: copy };
+      return {
+        ...prev,
+        users: { ...prev.users, [activeEmail]: { ...u, entries: copy } },
+      };
     });
   };
 
   const savedDatesInMonth = useMemo(() => {
-    const all = Object.keys(state.entries);
+    const all = Object.keys(entries);
     const monthStr = format(monthStart, "yyyy-MM");
     return new Set(all.filter((d) => d.startsWith(monthStr)));
-  }, [state.entries, monthStart]);
+  }, [entries, monthStart]);
 
   const days = useMemo(() => {
     const count = getDaysInMonth(monthStart);
-    const firstDay = monthStart.getDay();
+    const firstDay = monthStart.getDay(); // 0 sunday
     const cells: { date: Date | null; iso?: string }[] = [];
-
     for (let i = 0; i < firstDay; i++) cells.push({ date: null });
     for (let d = 1; d <= count; d++) {
       const date = new Date(monthStart.getFullYear(), monthStart.getMonth(), d);
@@ -384,12 +405,12 @@ export default function App() {
 
   const periodEntries = useMemo(() => {
     const out: DayEntry[] = [];
-    for (const [dateISO, entry] of Object.entries(state.entries)) {
+    for (const [dateISO, entry] of Object.entries(entries)) {
       if (inRangeISO(dateISO, selectedPeriod.startISO, selectedPeriod.endISO)) out.push(entry);
     }
     out.sort((a, b) => (a.dateISO < b.dateISO ? -1 : 1));
     return out;
-  }, [state.entries, selectedPeriod.startISO, selectedPeriod.endISO]);
+  }, [entries, selectedPeriod.startISO, selectedPeriod.endISO]);
 
   const totals = useMemo(() => {
     const hours = periodEntries.reduce((acc, e) => acc + clampNum(e.hours, 0), 0);
@@ -397,17 +418,132 @@ export default function App() {
       (acc, e) => acc + (e.expenses || []).reduce((a, x) => a + clampNum(x.amount, 0), 0),
       0
     );
-    return { hours: round2(hours), expenses: round2(expenses) };
-  }, [periodEntries]);
+    const rate = clampNum(activeUser.ratePerHour, 0);
+    const pay = hours * rate;
+    return { hours: round2(hours), expenses: round2(expenses), pay: round2(pay), rate };
+  }, [periodEntries, activeUser.ratePerHour]);
+
+  /** ---------------- COPY MODES ---------------- */
+  const [submitMenuOpen, setSubmitMenuOpen] = useState(false);
+
+  type CopyMode = "none" | "copy_day_select";
+  const [copyMode, setCopyMode] = useState<CopyMode>("none");
+  const [copySourceDateISO, setCopySourceDateISO] = useState<string | null>(null);
+  const [copyTargets, setCopyTargets] = useState<Record<string, true>>({}); // selected days
+
+  const startCopyMyDay = () => {
+    if (!activeEmail) return alert("Bagă Login email.");
+    const src = state.selectedDateISO;
+    const srcEntry = entries[src];
+    if (!srcEntry) return alert("Nu ai entry salvat pe ziua asta. Pune datele și salvează ziua întâi.");
+    setCopyMode("copy_day_select");
+    setCopySourceDateISO(src);
+    setCopyTargets({});
+    setSubmitMenuOpen(false);
+  };
+
+  const toggleCopyTarget = (iso: string) => {
+    if (!copySourceDateISO) return;
+    if (iso === copySourceDateISO) return; // nu copiem peste sursă
+    setCopyTargets((prev) => {
+      const next = { ...prev };
+      if (next[iso]) delete next[iso];
+      else next[iso] = true;
+      return next;
+    });
+  };
+
+  const applyCopyMyDay = () => {
+    if (!activeEmail) return;
+    if (!copySourceDateISO) return;
+    const src = entries[copySourceDateISO];
+    if (!src) return alert("Source day missing.");
+
+    const targetISOs = Object.keys(copyTargets);
+    if (targetISOs.length === 0) return alert("Selectează cel puțin o zi în calendar.");
+
+    if (isLocked) return alert("Perioada este locked. Unlock (Admin) ca să copiezi.");
+
+    setState((prev) => {
+      const u = prev.users[activeEmail] || makeDefaultUser();
+      const nextEntries = { ...u.entries };
+
+      for (const iso of targetISOs) {
+        nextEntries[iso] = {
+          ...src,
+          dateISO: iso,
+        };
+      }
+
+      return {
+        ...prev,
+        users: {
+          ...prev.users,
+          [activeEmail]: { ...u, entries: nextEntries },
+        },
+      };
+    });
+
+    // rămâi în modul de select, ca să poți bifa în continuare fără să revii la menu
+    alert(`Copied ${targetISOs.length} day(s) ✅`);
+  };
+
+  const exitCopyMode = () => {
+    setCopyMode("none");
+    setCopySourceDateISO(null);
+    setCopyTargets({});
+  };
+
+  /** Copy my colleague: copiezi toate zilele din perioada selectată către unul sau mai mulți colegi (local) */
+  const copyMyColleague = () => {
+    if (!activeEmail) return alert("Bagă Login email.");
+    const raw = window.prompt("Emails colegi (separate prin virgulă):\nex: a@windpro.pl, b@windpro.pl");
+    if (!raw) return;
+    const emails = raw
+      .split(",")
+      .map((x) => normalizeEmail(x))
+      .filter(Boolean);
+
+    if (emails.length === 0) return;
+
+    const payloadToCopy = periodEntries; // doar perioada selectată
+    if (payloadToCopy.length === 0) return alert("Nu ai nimic de copiat în perioada selectată.");
+
+    setState((prev) => {
+      const nextUsers = { ...prev.users };
+
+      for (const em of emails) {
+        if (!em) continue;
+        const u = nextUsers[em] || makeDefaultUser();
+        const nextEntries = { ...u.entries };
+
+        // copiem fiecare day entry (suprascrie dacă există)
+        for (const e of payloadToCopy) {
+          nextEntries[e.dateISO] = { ...e, dateISO: e.dateISO };
+        }
+
+        nextUsers[em] = { ...u, entries: nextEntries }; // NU copiem rate-ul (fiecare are rate individual)
+      }
+
+      return { ...prev, users: nextUsers };
+    });
+
+    setSubmitMenuOpen(false);
+    alert(`Copied period to ${emails.length} colleague(s) ✅ (rate not copied)`);
+  };
 
   /** ------- Expenses ------- */
   const addExpense = () => {
     if (isLocked) return;
-    setEntry({ expenses: [...(currentEntry.expenses || []), { id: uid("exp"), type: "Taxi", amount: 0, note: "" }] });
+    setEntry({
+      expenses: [...(currentEntry.expenses || []), { id: uid("exp"), type: "Taxi", amount: 0, note: "" }],
+    });
   };
   const updateExpense = (id: string, patch: Partial<{ type: ExpenseType; amount: number; note: string }>) => {
     if (isLocked) return;
-    setEntry({ expenses: (currentEntry.expenses || []).map((e) => (e.id === id ? { ...e, ...patch } : e)) });
+    setEntry({
+      expenses: (currentEntry.expenses || []).map((e) => (e.id === id ? { ...e, ...patch } : e)),
+    });
   };
   const removeExpense = (id: string) => {
     if (isLocked) return;
@@ -446,25 +582,27 @@ export default function App() {
   };
 
   const signatureSave = () => {
-    if (isLocked) return;
+    if (!activeEmail || isLocked) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    setState((p) => ({ ...p, signatureDataUrl: canvas.toDataURL("image/png") }));
+    setUserPatch({ signatureDataUrl: canvas.toDataURL("image/png") });
   };
   const signatureClear = () => {
-    if (isLocked) return;
+    if (!activeEmail || isLocked) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    setState((p) => ({ ...p, signatureDataUrl: null }));
+    setUserPatch({ signatureDataUrl: null });
   };
 
   /** ------- Lock / Unlock ------- */
   const lockPeriod = () => {
     setState((p) =>
-      p.lockedPeriodIds.includes(selectedPeriod.id) ? p : { ...p, lockedPeriodIds: [...p.lockedPeriodIds, selectedPeriod.id] }
+      p.lockedPeriodIds.includes(selectedPeriod.id)
+        ? p
+        : { ...p, lockedPeriodIds: [...p.lockedPeriodIds, selectedPeriod.id] }
     );
   };
   const unlockAdmin = () => {
@@ -473,8 +611,10 @@ export default function App() {
     setState((p) => ({ ...p, lockedPeriodIds: p.lockedPeriodIds.filter((id) => id !== selectedPeriod.id) }));
   };
 
-  /** ------- PDF (boxed template, NO rates/pay) ------- */
-  const buildPdfArrayBuffer = (): ArrayBuffer => {
+  /** ------- PDF helpers ------- */
+  const safePdfText = (s: string) => trim1(String(s || "")).replace(/[^\x09\x0A\x0D\x20-\x7E€]/g, " ");
+
+  function buildPdfDoc(): jsPDF {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
 
     const pageW = doc.internal.pageSize.getWidth();
@@ -482,14 +622,14 @@ export default function App() {
     const margin = 36;
     const contentW = pageW - margin * 2;
 
-    const safe = (s: string) => trim1(String(s || "")).replace(/[^\x09\x0A\x0D\x20-\x7E€]/g, " ");
-
+    // Title
     doc.setFont("helvetica", "bold");
     doc.setFontSize(18);
     doc.text("Timesheet", margin, 46);
 
+    // Header box
     const headerTop = 60;
-    const headerH = 84;
+    const headerH = 96;
     doc.setDrawColor(200);
     doc.rect(margin, headerTop, contentW, headerH);
 
@@ -497,22 +637,25 @@ export default function App() {
     doc.setFontSize(10);
 
     const leftX = margin + 12;
-    const rightX = margin + contentW - 190;
+    const rightX = margin + contentW - 210;
 
-    doc.text(`Period: ${safe(selectedPeriod.label)}`, leftX, headerTop + 22);
-    doc.text(`Invoice date: ${safe(selectedPeriod.invoiceDateISO)}`, leftX, headerTop + 38);
-    doc.text(`Submitted by: ${safe(state.loginEmail || "-")}`, leftX, headerTop + 54);
-    doc.text(`Name: ${safe(state.loginName || "-")}`, leftX, headerTop + 70);
+    doc.text(`Period: ${safePdfText(selectedPeriod.label)}`, leftX, headerTop + 22);
+    doc.text(`Invoice date: ${safePdfText(selectedPeriod.invoiceDateISO)}`, leftX, headerTop + 38);
+    doc.text(`Submitted by: ${safePdfText(activeEmail)}`, leftX, headerTop + 54);
+    doc.text(`Name: ${safePdfText(activeUser.name || "-")}`, leftX, headerTop + 70);
+    doc.text(`Rate: € ${round2(totals.rate).toFixed(2)} / h`, leftX, headerTop + 86);
 
     doc.setFont("helvetica", "bold");
     doc.text(`Total hours: ${totals.hours.toFixed(2)}`, rightX, headerTop + 22);
     doc.text(`Total expenses: € ${totals.expenses.toFixed(2)}`, rightX, headerTop + 38);
+    doc.text(`Total pay: € ${totals.pay.toFixed(2)}`, rightX, headerTop + 54);
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.text(`Generated: ${format(new Date(), "Pp")}`, rightX, headerTop + 56);
+    doc.text(`Generated: ${format(new Date(), "Pp")}`, rightX, headerTop + 76);
 
     let y = headerTop + headerH + 26;
+
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12);
     doc.text("Entries (Selected Period)", margin, y);
@@ -522,15 +665,17 @@ export default function App() {
     const tableW = contentW;
 
     const cols = [
-      { label: "Date", w: 70 },
-      { label: "Work type", w: 190 },
-      { label: "Vessel", w: 80 },
-      { label: "Location", w: 80 },
-      { label: "Hours", w: 52 },
-      { label: "SW", w: 58 },
-      { label: "Expenses", w: 78 },
-      { label: "Expense note", w: 90 },
-      { label: "Work note", w: 90 },
+      { label: "Date", w: 64 },
+      { label: "Day", w: 34 },
+      { label: "Work type", w: 160 },
+      { label: "Vessel", w: 72 },
+      { label: "Location", w: 72 },
+      { label: "Hours", w: 48 },
+      { label: "Rate", w: 52 },
+      { label: "Pay", w: 58 },
+      { label: "SW", w: 54 },
+      { label: "Expenses", w: 68 },
+      { label: "Work note", w: 120 },
     ];
 
     const sumW = cols.reduce((a, c) => a + c.w, 0);
@@ -540,49 +685,60 @@ export default function App() {
     const headerRowH = 20;
     const baseRowH = 18;
     const pad = 3;
-
-    doc.setDrawColor(210);
-    doc.setFillColor(245, 245, 245);
-    doc.rect(tableX, y, tableW, headerRowH, "F");
-    doc.rect(tableX, y, tableW, headerRowH);
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-
-    let cx = tableX;
-    for (const c of cols) {
-      doc.rect(cx, y, c.w, headerRowH);
-      doc.text(c.label, cx + pad, y + 13);
-      cx += c.w;
-    }
-    y += headerRowH;
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-
     const rowMaxLines = 3;
 
+    const drawHeader = () => {
+      doc.setDrawColor(210);
+      doc.setFillColor(245, 245, 245);
+      doc.rect(tableX, y, tableW, headerRowH, "F");
+      doc.rect(tableX, y, tableW, headerRowH);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+
+      let cx = tableX;
+      for (const c of cols) {
+        doc.rect(cx, y, c.w, headerRowH);
+        doc.text(c.label, cx + pad, y + 13);
+        cx += c.w;
+      }
+      y += headerRowH;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+    };
+
+    drawHeader();
+
     for (const e of periodEntries) {
-      const vessel = safe(trim1(e.vesselManual || e.vesselPreset) || "-");
-      const loc = safe(trim1(e.location) || "-");
-      const work = safe(e.workType);
-      const sw = safe(trim1(e.serviceWorker) || "-");
-      const hours = safe(String(round2(e.hours)));
+      const vessel = safePdfText(trim1(e.vesselManual || e.vesselPreset) || "-");
+      const loc = safePdfText(trim1(e.location) || "-");
+      const work = safePdfText(e.workType);
+      const sw = safePdfText(trim1(e.serviceWorker) || "-");
+      const workNote = safePdfText(trim1(e.workDone) || "-");
+
+      const hoursN = round2(clampNum(e.hours, 0));
+      const rateN = round2(totals.rate);
+      const payN = round2(hoursN * rateN);
 
       const expSum = round2((e.expenses || []).reduce((a, x) => a + clampNum(x.amount, 0), 0));
       const exp = `€ ${expSum.toFixed(2)}`;
 
-      const expNoteRaw = (e.expenses || [])
-        .map((x) => {
-          const note = trim1(x.note);
-          return note ? `${x.type}:${note}` : `${x.type}`;
-        })
-        .join(" | ");
-      const expNote = safe(expNoteRaw || "-");
+      const dayNum = safePdfText(format(parseISO(e.dateISO), "d"));
 
-      const workNote = safe(trim1(e.workDone) || "-");
-
-      const cells = [safe(e.dateISO), work, vessel, loc, hours, sw, exp, expNote, workNote];
+      const cells = [
+        safePdfText(e.dateISO),
+        dayNum,
+        work,
+        vessel,
+        loc,
+        hoursN.toFixed(2),
+        `€ ${rateN.toFixed(2)}`,
+        `€ ${payN.toFixed(2)}`,
+        sw,
+        exp,
+        workNote,
+      ];
 
       const cellLines: string[][] = [];
       let maxLines = 1;
@@ -604,27 +760,10 @@ export default function App() {
         doc.text("Entries (Selected Period)", margin, y);
         y += 14;
 
-        doc.setDrawColor(210);
-        doc.setFillColor(245, 245, 245);
-        doc.rect(tableX, y, tableW, headerRowH, "F");
-        doc.rect(tableX, y, tableW, headerRowH);
-
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(8);
-
-        cx = tableX;
-        for (const c of cols) {
-          doc.rect(cx, y, c.w, headerRowH);
-          doc.text(c.label, cx + pad, y + 13);
-          cx += c.w;
-        }
-        y += headerRowH;
-
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(8);
+        drawHeader();
       }
 
-      cx = tableX;
+      let cx = tableX;
       doc.setDrawColor(220);
       doc.rect(tableX, y, tableW, rowH);
 
@@ -640,6 +779,7 @@ export default function App() {
       y += rowH;
     }
 
+    // Totals + signature
     y += 22;
     if (y + 110 > pageH) {
       doc.addPage();
@@ -656,154 +796,113 @@ export default function App() {
     doc.text(`Hours: ${totals.hours.toFixed(2)}`, margin, y);
     y += 14;
     doc.text(`Expenses: € ${totals.expenses.toFixed(2)}`, margin, y);
+    y += 14;
+    doc.text(`Pay: € ${totals.pay.toFixed(2)}   (Rate: € ${round2(totals.rate).toFixed(2)} / h)`, margin, y);
 
     const sigBoxW = 200;
     const sigBoxH = 90;
     const sigX = pageW - margin - sigBoxW;
-    const sigY = y - 24;
+    const sigY = y - 36;
 
     doc.setFont("helvetica", "bold");
     doc.text("Signature", sigX, sigY - 8);
     doc.setDrawColor(200);
     doc.rect(sigX, sigY, sigBoxW, sigBoxH);
 
-    if (state.signatureDataUrl) {
+    if (activeUser.signatureDataUrl) {
       try {
-        doc.addImage(state.signatureDataUrl, "PNG", sigX + 10, sigY + 12, sigBoxW - 20, sigBoxH - 24);
-      } catch {}
-    }
-
-    return doc.output("arraybuffer") as ArrayBuffer;
-  };
-
-  /** ------- EMAIL SEND (Vercel API) ------- */
-  const sendToCollectorEmail = async (pdfArrayBuffer: ArrayBuffer) => {
-    const payload = {
-      to: COLLECTOR_EMAIL,
-      submittedBy: normalizeEmail(state.loginEmail),
-      name: trim1(state.loginName),
-      period: selectedPeriod,
-      totals,
-      entries: periodEntries,
-      pdfBase64: arrayBufferToBase64(pdfArrayBuffer),
-      pdfFileName: `WindPro_TimeSheet_${selectedPeriod.id}.pdf`,
-    };
-
-    const res = await fetch("/api/send-timesheet", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const t = await res.text().catch(() => "");
-      throw new Error(`Email failed: ${res.status} ${t}`);
-    }
-  };
-
-  /** ------- Copy colleague (local) ------- */
-  const copyMyColleague = () => {
-    setSubmitMenuOpen(false);
-
-    const email = normalizeEmail(window.prompt("Colleague email:", COLLECTOR_EMAIL) || "");
-    if (!email) return;
-
-    // copy selected period entries only
-    const periodOnly: Record<string, DayEntry> = {};
-    for (const [dateISO, entry] of Object.entries(state.entries)) {
-      if (inRangeISO(dateISO, selectedPeriod.startISO, selectedPeriod.endISO)) {
-        periodOnly[dateISO] = JSON.parse(JSON.stringify(entry));
+        doc.addImage(activeUser.signatureDataUrl, "PNG", sigX + 10, sigY + 12, sigBoxW - 20, sigBoxH - 24);
+      } catch {
+        // ignore
       }
     }
 
-    setState((prev) => {
-      const users = { ...prev.users };
-      if (!users[email]) users[email] = { entries: {}, signatureDataUrl: null };
-      users[email] = { ...users[email], entries: { ...users[email].entries, ...periodOnly } };
+    return doc;
+  }
 
-      const colleagues = prev.colleagues.includes(email) ? prev.colleagues : [...prev.colleagues, email];
-
-      return { ...prev, users, colleagues };
-    });
-
-    alert(`Copied this period → ${email} (local).`);
+  const exportPdfPeriod = () => {
+    if (!activeEmail) return alert("Bagă Login email.");
+    const doc = buildPdfDoc();
+    doc.save(`WindPro_TimeSheet_${selectedPeriod.id}_${activeEmail}.pdf`);
   };
 
-  /** ------- SUBMIT MENU ACTIONS ------- */
-  const submitExportLockAndEmail = async () => {
-    setSubmitMenuOpen(false);
+  /** ------- Submit = Email + Lock ------- */
+  const submitLockPeriod = async () => {
+    if (!activeEmail) return alert("Bagă Login email.");
 
-    const em = normalizeEmail(state.loginEmail);
-    if (!em) return alert("Bagă Login email.");
-    if (!trim1(state.loginName)) return alert("Bagă și Name.");
-    if (isLocked) return alert("Perioada e locked.");
-
-    setSending(true);
     try {
-      const pdfBuf = buildPdfArrayBuffer();
+      const doc = buildPdfDoc();
+      const dataUri = doc.output("datauristring");
+      const base64 = dataUri.split(",")[1] || "";
 
-      // download PDF local
-      const blob = new Blob([pdfBuf], { type: "application/pdf" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `WindPro_TimeSheet_${selectedPeriod.id}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-
-      // send email
-      await sendToCollectorEmail(pdfBuf);
-
-      // lock
-      lockPeriod();
-
-      alert("Submit OK ✅ PDF generated + sent to collector email.");
-    } catch (e: any) {
-      alert(`Eroare la trimitere email: ${e?.message || e}`);
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const enterCopyDayMode = () => {
-    setSubmitMenuOpen(false);
-    if (isLocked) return;
-    setCopyDayMode(true); // stays ON until Cancel
-  };
-
-  /** ------- Calendar day click (Copy mode persistent) ------- */
-  const onCalendarPick = (targetISO: string) => {
-    if (copyDayMode) {
-      if (isLocked) return;
-
-      setState((prev) => {
-        const srcISO = prev.selectedDateISO;
-        const src = prev.entries[srcISO] || makeDefaultEntry(srcISO);
-        const copied: DayEntry = { ...JSON.parse(JSON.stringify(src)), dateISO: targetISO };
-        return { ...prev, entries: { ...prev.entries, [targetISO]: copied }, selectedDateISO: targetISO };
+      const resp = await fetch("/api/send-timesheet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: COLLECTOR_EMAIL,
+          submittedBy: activeEmail,
+          name: activeUser.name,
+          periodLabel: selectedPeriod.label,
+          invoiceDate: selectedPeriod.invoiceDateISO,
+          ratePerHour: totals.rate,
+          totalHours: totals.hours,
+          totalExpenses: totals.expenses,
+          totalPay: totals.pay,
+          pdfFileName: `WindPro_TimeSheet_${selectedPeriod.id}_${activeEmail}.pdf`,
+          pdfBase64: base64,
+        }),
       });
 
-      // IMPORTANT: NU iesim din copy mode -> poti selecta mai multe zile
+      if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(txt || `HTTP ${resp.status}`);
+      }
+
+      lockPeriod();
+      alert("Submit OK ✅ Email sent + period locked.");
+    } catch (e: any) {
+      alert(`Eroare la trimitere email: ${e?.message || e}`);
+    }
+  };
+
+  /** ------- Calendar click ------- */
+  const onCalendarPick = (targetISO: string) => {
+    if (copyMode === "copy_day_select") {
+      toggleCopyTarget(targetISO);
       return;
     }
-
     setState((p) => ({ ...p, selectedDateISO: targetISO }));
   };
+
+  /** ------- Day pay ------- */
+  const dayPay = useMemo(() => {
+    const h = clampNum(currentEntry.hours, 0);
+    const r = clampNum(activeUser.ratePerHour, 0);
+    return round2(h * r);
+  }, [currentEntry.hours, activeUser.ratePerHour]);
+
+  /** ------- Close submit menu on outside click ------- */
+  useEffect(() => {
+    const onDown = () => setSubmitMenuOpen(false);
+    if (!submitMenuOpen) return;
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [submitMenuOpen]);
+
+  const copyTargetsCount = useMemo(() => Object.keys(copyTargets).length, [copyTargets]);
 
   return (
     <div style={{ maxWidth: 1280, margin: "0 auto", padding: 18, fontFamily: "Georgia, 'Times New Roman', serif" }}>
       <h1 style={{ margin: "0 0 4px 0" }}>WindPro TimeSheet</h1>
       <div style={{ opacity: 0.7, marginBottom: 12 }}>
-        Submit = export + lock + send email to <b>{COLLECTOR_EMAIL}</b>. Unlock = admin.
+        PDF doar pe perioada selectată (luna). Submit = email + lock. Unlock = admin.
       </div>
 
       {/* TOP BAR */}
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "420px 1fr auto",
+          gridTemplateColumns: "540px 1fr auto",
           gap: 12,
           alignItems: "center",
           padding: 14,
@@ -812,7 +911,7 @@ export default function App() {
           background: "white",
         }}
       >
-        {/* Email + Name under */}
+        {/* Email + Name */}
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", alignItems: "center", gap: 10 }}>
             <div style={{ opacity: 0.8 }}>Login email:</div>
@@ -820,17 +919,18 @@ export default function App() {
               value={state.loginEmail}
               onChange={(e) => setState((p) => ({ ...p, loginEmail: e.target.value }))}
               placeholder="ex: borot@windpro.pl"
-              style={{ padding: 10, borderRadius: 12, border: "2px solid #111" }}
+              style={strongInput}
             />
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", alignItems: "center", gap: 10 }}>
             <div style={{ opacity: 0.8 }}>Name:</div>
             <input
-              value={state.loginName}
-              onChange={(e) => setState((p) => ({ ...p, loginName: e.target.value }))}
+              value={activeUser.name}
+              onChange={(e) => setUserPatch({ name: e.target.value })}
               placeholder="ex: Bogdan Rotariu"
-              style={{ padding: 10, borderRadius: 12, border: "2px solid #111" }}
+              style={strongInput}
+              disabled={!activeEmail}
             />
           </div>
         </div>
@@ -851,41 +951,140 @@ export default function App() {
           </select>
         </div>
 
-        {/* Submit dropdown */}
-        <div ref={submitMenuRef} style={{ position: "relative", justifySelf: "end" }}>
-          <button onClick={() => setSubmitMenuOpen((v) => !v)} style={btnGreen} disabled={sending}>
-            {sending ? "Sending..." : "Submit ▾"}
+        {/* Actions */}
+        <div style={{ display: "flex", gap: 10, justifySelf: "end", position: "relative" }}>
+          <button onClick={exportPdfPeriod} style={btnBlue} disabled={!activeEmail}>
+            Export PDF (Period)
           </button>
 
-          {submitMenuOpen && (
-            <div
-              style={{
-                position: "absolute",
-                right: 0,
-                top: "calc(100% + 8px)",
-                width: 300,
-                background: "white",
-                border: "1px solid #e6e6e6",
-                borderRadius: 12,
-                boxShadow: "0 8px 30px rgba(0,0,0,0.08)",
-                overflow: "hidden",
-                zIndex: 50,
-              }}
+          {/* Submit Split Button + Menu */}
+          <div style={{ position: "relative", display: "flex" }} onMouseDown={(e) => e.stopPropagation()}>
+            <button
+              onClick={submitLockPeriod}
+              style={{ ...btnGreen, borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+              disabled={!activeEmail || isLocked}
+              title="Submit (Email + Lock)"
             >
-              <MenuItem onClick={submitExportLockAndEmail}>Submit (Export + Lock + Email)</MenuItem>
-              <MenuItem onClick={enterCopyDayMode}>Copy my day (multi-select)</MenuItem>
-              <MenuItem onClick={copyMyColleague}>Copy my colleague (period)</MenuItem>
+              Submit
+            </button>
+            <button
+              onClick={() => setSubmitMenuOpen((p) => !p)}
+              style={{ ...btnGreenSplit, borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
+              disabled={!activeEmail}
+              title="Open menu"
+            >
+              ▾
+            </button>
 
-              <div style={{ padding: 10, borderTop: "1px solid #eee", fontSize: 12, opacity: 0.75 }}>
-                Sends to: <b>{COLLECTOR_EMAIL}</b>
+            {submitMenuOpen && (
+              <div
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  top: 48,
+                  background: "white",
+                  border: "1px solid #ddd",
+                  borderRadius: 12,
+                  boxShadow: "0 10px 25px rgba(0,0,0,0.08)",
+                  overflow: "hidden",
+                  minWidth: 240,
+                  zIndex: 50,
+                }}
+              >
+                <button
+                  onClick={() => {
+                    setSubmitMenuOpen(false);
+                    submitLockPeriod();
+                  }}
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "12px 14px",
+                    border: "none",
+                    background: "white",
+                    cursor: "pointer",
+                    fontWeight: 800,
+                  }}
+                  disabled={!activeEmail || isLocked}
+                >
+                  Submit (Email + Lock)
+                </button>
+
+                <div style={{ height: 1, background: "#eee" }} />
+
+                <button
+                  onClick={startCopyMyDay}
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "12px 14px",
+                    border: "none",
+                    background: "white",
+                    cursor: "pointer",
+                    fontWeight: 800,
+                  }}
+                  disabled={!activeEmail || isLocked}
+                >
+                  Copy my day (select days)
+                </button>
+
+                <button
+                  onClick={copyMyColleague}
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "12px 14px",
+                    border: "none",
+                    background: "white",
+                    cursor: "pointer",
+                    fontWeight: 800,
+                  }}
+                  disabled={!activeEmail || isLocked}
+                >
+                  Copy my colleague (period)
+                </button>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 
+      {/* Copy mode banner */}
+      {copyMode === "copy_day_select" && (
+        <div
+          style={{
+            marginTop: 12,
+            padding: 12,
+            borderRadius: 14,
+            border: "1px solid #d6e2ff",
+            background: "#f4f7ff",
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            alignItems: "center",
+          }}
+        >
+          <div style={{ fontWeight: 800 }}>
+            Copy mode: <span style={{ fontWeight: 900 }}>Copy my day</span>
+            <div style={{ fontWeight: 600, opacity: 0.8, marginTop: 4 }}>
+              Source day: <b>{copySourceDateISO}</b>. Click zile în calendar ca să le selectezi (multi-select). Selected:{" "}
+              <b>{copyTargetsCount}</b>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={applyCopyMyDay} style={btnBlue} disabled={copyTargetsCount === 0 || isLocked}>
+              Apply copy
+            </button>
+            <button onClick={exitCopyMode} style={smallBtn}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr", gap: 14, marginTop: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1fr", gap: 14, marginTop: 14 }}>
         <Card title="Selected period" big={selectedPeriod.label}>
           <div>
             {selectedPeriod.startISO} → {selectedPeriod.endISO} | Invoice {selectedPeriod.invoiceDateISO}
@@ -896,6 +1095,9 @@ export default function App() {
         </Card>
         <Card title="Hours (period)" big={totals.hours.toFixed(2)} />
         <Card title="Expenses (period)" big={`€ ${totals.expenses.toFixed(2)}`} />
+        <Card title="Pay (period)" big={`€ ${totals.pay.toFixed(2)}`}>
+          <div>Rate: € {round2(totals.rate).toFixed(2)} / h</div>
+        </Card>
       </div>
 
       {/* Main */}
@@ -905,36 +1107,24 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <div style={{ fontSize: 24, fontWeight: 700 }}>{monthLabel}</div>
             <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => setState((p) => ({ ...p, selectedDateISO: format(subMonths(selectedDate, 1), "yyyy-MM-dd") }))} style={iconBtn}>
+              <button
+                onClick={() =>
+                  setState((p) => ({ ...p, selectedDateISO: format(subMonths(selectedDate, 1), "yyyy-MM-dd") }))
+                }
+                style={iconBtn}
+              >
                 ‹
               </button>
-              <button onClick={() => setState((p) => ({ ...p, selectedDateISO: format(addMonths(selectedDate, 1), "yyyy-MM-dd") }))} style={iconBtn}>
+              <button
+                onClick={() =>
+                  setState((p) => ({ ...p, selectedDateISO: format(addMonths(selectedDate, 1), "yyyy-MM-dd") }))
+                }
+                style={iconBtn}
+              >
                 ›
               </button>
             </div>
           </div>
-
-          {copyDayMode && (
-            <div
-              style={{
-                marginTop: 10,
-                padding: 10,
-                borderRadius: 12,
-                border: "1px solid #ffe0a3",
-                background: "#fff7e6",
-                fontWeight: 900,
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 10,
-              }}
-            >
-              <span>Copy mode ON: click multiple days to paste. (Cancel to stop)</span>
-              <button onClick={() => setCopyDayMode(false)} style={{ ...smallBtn, padding: "8px 10px" }}>
-                Cancel
-              </button>
-            </div>
-          )}
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8, marginTop: 12, opacity: 0.75 }}>
             {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
@@ -948,8 +1138,22 @@ export default function App() {
             {days.map((cell, idx) => {
               if (!cell.date || !cell.iso) return <div key={idx} style={{ height: 44 }} />;
               const iso = cell.iso;
-              const isSelected = iso === state.selectedDateISO;
+              const isSelectedDay = iso === state.selectedDateISO;
               const saved = savedDatesInMonth.has(iso);
+
+              const isCopySelected = !!copyTargets[iso];
+              const isSource = copySourceDateISO === iso;
+
+              const border =
+                copyMode === "copy_day_select"
+                  ? isSource
+                    ? "3px solid #178a3a"
+                    : isCopySelected
+                      ? "3px solid #1f5eff"
+                      : "1px solid transparent"
+                  : isSelectedDay
+                    ? "3px solid #1f5eff"
+                    : "1px solid transparent";
 
               return (
                 <button
@@ -958,12 +1162,22 @@ export default function App() {
                   style={{
                     height: 44,
                     borderRadius: 999,
-                    border: isSelected ? "3px solid #1f5eff" : "1px solid transparent",
+                    border,
                     background: "white",
                     cursor: "pointer",
                     position: "relative",
                     fontWeight: 700,
+                    opacity: copyMode === "copy_day_select" && isLocked ? 0.6 : 1,
                   }}
+                  title={
+                    copyMode === "copy_day_select"
+                      ? isSource
+                        ? "Source day"
+                        : isCopySelected
+                          ? "Selected target (click to unselect)"
+                          : "Click to select as target"
+                      : "Select day"
+                  }
                 >
                   {format(cell.date, "d")}
                   {saved && (
@@ -981,10 +1195,10 @@ export default function App() {
             <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 10 }}>Signature</div>
 
             <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
-              <button onClick={signatureSave} style={smallBtn} disabled={isLocked}>
+              <button onClick={signatureSave} style={smallBtn} disabled={!activeEmail || isLocked}>
                 Save
               </button>
-              <button onClick={signatureClear} style={smallBtn} disabled={isLocked}>
+              <button onClick={signatureClear} style={smallBtn} disabled={!activeEmail || isLocked}>
                 Clear
               </button>
               <button onClick={unlockAdmin} style={{ ...smallBtn, borderColor: "#f0bcbc", color: "#b55" }}>
@@ -1007,7 +1221,7 @@ export default function App() {
                 border: "1px solid #ddd",
                 background: "white",
                 touchAction: "none",
-                opacity: isLocked ? 0.6 : 1,
+                opacity: !activeEmail || isLocked ? 0.6 : 1,
               }}
             />
           </div>
@@ -1029,7 +1243,11 @@ export default function App() {
               </div>
             </div>
 
-            <button onClick={clearDay} style={{ ...smallBtn, borderColor: "#f0bcbc", color: "#b55" }} disabled={isLocked}>
+            <button
+              onClick={clearDay}
+              style={{ ...smallBtn, borderColor: "#f0bcbc", color: "#b55" }}
+              disabled={!activeEmail || isLocked}
+            >
               Clear day
             </button>
           </div>
@@ -1037,10 +1255,16 @@ export default function App() {
           <div style={{ marginTop: 18 }}>
             <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 10 }}>Work</div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: 12 }}>
+            {/* Work row: Work type + Hours + Rate */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 140px 170px", gap: 12, alignItems: "end" }}>
               <label>
                 <div style={lbl}>Work type</div>
-                <select value={currentEntry.workType} disabled={isLocked} onChange={(e) => setEntry({ workType: e.target.value as WorkType })} style={input}>
+                <select
+                  value={currentEntry.workType}
+                  disabled={!activeEmail || isLocked}
+                  onChange={(e) => setEntry({ workType: e.target.value as WorkType })}
+                  style={{ ...input, padding: 10 }}
+                >
                   {WORK_TYPES.map((t) => (
                     <option key={t} value={t}>
                       {t}
@@ -1051,45 +1275,108 @@ export default function App() {
 
               <label>
                 <div style={lbl}>Hours</div>
-                <input value={currentEntry.hours} disabled={isLocked} onChange={(e) => setEntry({ hours: clampNum(e.target.value, 0) })} type="number" min={0} step="0.25" style={input} />
+                <input
+                  value={currentEntry.hours}
+                  disabled={!activeEmail || isLocked}
+                  onChange={(e) => setEntry({ hours: clampNum(e.target.value, 0) })}
+                  type="number"
+                  min={0}
+                  step="0.25"
+                  style={{ ...input, padding: 10 }}
+                />
               </label>
+
+              <label>
+                <div style={lbl}>Payment rate (€ / hour)</div>
+                <input
+                  value={activeUser.ratePerHour}
+                  disabled={!activeEmail}
+                  onChange={(e) => setUserPatch({ ratePerHour: clampNum(e.target.value, 0) })}
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  style={{ ...input, padding: 10 }}
+                  placeholder="ex: 45"
+                />
+              </label>
+            </div>
+
+            <div style={{ marginTop: 10, opacity: 0.8 }}>
+              Day pay: <b>€ {dayPay.toFixed(2)}</b>
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 14 }}>
               <label>
                 <div style={lbl}>Location</div>
-                <input value={currentEntry.location} disabled={isLocked} onChange={(e) => setEntry({ location: e.target.value })} placeholder="ex: Borssele" style={input} />
+                <input
+                  value={currentEntry.location}
+                  disabled={!activeEmail || isLocked}
+                  onChange={(e) => setEntry({ location: e.target.value })}
+                  placeholder="ex: Borssele"
+                  style={input}
+                />
               </label>
 
               <label>
                 <div style={lbl}>Service Worker (SW)</div>
-                <input value={currentEntry.serviceWorker} disabled={isLocked} onChange={(e) => setEntry({ serviceWorker: e.target.value })} placeholder="ex: 67008943" style={input} />
+                <input
+                  value={currentEntry.serviceWorker}
+                  disabled={!activeEmail || isLocked}
+                  onChange={(e) => setEntry({ serviceWorker: e.target.value })}
+                  placeholder="ex: 67008943"
+                  style={input}
+                />
               </label>
             </div>
 
             <label style={{ display: "block", marginTop: 14 }}>
               <div style={lbl}>Work note</div>
-              <input value={currentEntry.workDone} disabled={isLocked} onChange={(e) => setEntry({ workDone: e.target.value })} placeholder="GBX exchange / HV test / torque check..." style={input} />
+              <input
+                value={currentEntry.workDone}
+                disabled={!activeEmail || isLocked}
+                onChange={(e) => setEntry({ workDone: e.target.value })}
+                placeholder="GBX exchange / HV test / torque check..."
+                style={input}
+              />
             </label>
 
             <label style={{ display: "block", marginTop: 14 }}>
               <div style={lbl}>Comment</div>
-              <input value={currentEntry.comment} disabled={isLocked} onChange={(e) => setEntry({ comment: e.target.value })} placeholder="notes..." style={input} />
+              <input
+                value={currentEntry.comment}
+                disabled={!activeEmail || isLocked}
+                onChange={(e) => setEntry({ comment: e.target.value })}
+                placeholder="notes..."
+                style={input}
+              />
             </label>
 
             {/* Expenses */}
             <div style={{ marginTop: 18 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ fontSize: 18, fontWeight: 800 }}>Expenses</div>
-                <button onClick={addExpense} style={smallBtn} disabled={isLocked}>
+                <button onClick={addExpense} style={smallBtn} disabled={!activeEmail || isLocked}>
                   + Add
                 </button>
               </div>
 
               <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
                 {(currentEntry.expenses || []).map((ex) => (
-                  <div key={ex.id} style={{ display: "grid", gridTemplateColumns: "220px 140px 1fr 80px", gap: 10, alignItems: "center" }}>
-                    <select value={ex.type} disabled={isLocked} onChange={(e) => updateExpense(ex.id, { type: e.target.value as ExpenseType })} style={input}>
+                  <div
+                    key={ex.id}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "220px 140px 1fr 80px",
+                      gap: 10,
+                      alignItems: "center",
+                    }}
+                  >
+                    <select
+                      value={ex.type}
+                      disabled={!activeEmail || isLocked}
+                      onChange={(e) => updateExpense(ex.id, { type: e.target.value as ExpenseType })}
+                      style={input}
+                    >
                       {EXP_TYPES.map((t) => (
                         <option key={t} value={t}>
                           {t}
@@ -1097,11 +1384,30 @@ export default function App() {
                       ))}
                     </select>
 
-                    <input type="number" min={0} step="0.01" value={ex.amount} disabled={isLocked} onChange={(e) => updateExpense(ex.id, { amount: clampNum(e.target.value, 0) })} style={input} placeholder="Amount" />
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={ex.amount}
+                      disabled={!activeEmail || isLocked}
+                      onChange={(e) => updateExpense(ex.id, { amount: clampNum(e.target.value, 0) })}
+                      style={input}
+                      placeholder="Amount"
+                    />
 
-                    <input value={ex.note} disabled={isLocked} onChange={(e) => updateExpense(ex.id, { note: e.target.value })} style={input} placeholder="note..." />
+                    <input
+                      value={ex.note}
+                      disabled={!activeEmail || isLocked}
+                      onChange={(e) => updateExpense(ex.id, { note: e.target.value })}
+                      style={input}
+                      placeholder="note..."
+                    />
 
-                    <button onClick={() => removeExpense(ex.id)} style={{ ...smallBtn, borderColor: "#eee" }} disabled={isLocked}>
+                    <button
+                      onClick={() => removeExpense(ex.id)}
+                      style={{ ...smallBtn, borderColor: "#eee" }}
+                      disabled={!activeEmail || isLocked}
+                    >
                       ✕
                     </button>
                   </div>
@@ -1115,7 +1421,12 @@ export default function App() {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                   <label>
                     <div style={lbl}>Platform</div>
-                    <select value={currentEntry.platformType} disabled={isLocked} onChange={(e) => setEntry({ platformType: e.target.value as PlatformType })} style={input}>
+                    <select
+                      value={currentEntry.platformType}
+                      disabled={!activeEmail || isLocked}
+                      onChange={(e) => setEntry({ platformType: e.target.value as PlatformType })}
+                      style={input}
+                    >
                       {PLATFORM_TYPES.map((p) => (
                         <option key={p} value={p}>
                           {p}
@@ -1131,10 +1442,13 @@ export default function App() {
                     <div style={lbl}>Vessel (preset)</div>
                     <select
                       value={currentEntry.vesselPreset}
-                      disabled={isLocked}
+                      disabled={!activeEmail || isLocked}
                       onChange={(e) => {
                         const v = e.target.value;
-                        setEntry({ vesselPreset: v, vesselManual: trim1(currentEntry.vesselManual) ? currentEntry.vesselManual : v });
+                        setEntry({
+                          vesselPreset: v,
+                          vesselManual: trim1(currentEntry.vesselManual) ? currentEntry.vesselManual : v,
+                        });
                       }}
                       style={input}
                     >
@@ -1148,7 +1462,13 @@ export default function App() {
 
                   <label>
                     <div style={lbl}>Vessel (manual)</div>
-                    <input value={currentEntry.vesselManual} disabled={isLocked} onChange={(e) => setEntry({ vesselManual: e.target.value })} placeholder="ex: Blue Tern" style={input} />
+                    <input
+                      value={currentEntry.vesselManual}
+                      disabled={!activeEmail || isLocked}
+                      onChange={(e) => setEntry({ vesselManual: e.target.value })}
+                      placeholder="ex: Blue Tern"
+                      style={input}
+                    />
                   </label>
                 </div>
               </div>

@@ -1,61 +1,67 @@
 import { Resend } from "resend";
 
-export const config = {
-  runtime: "nodejs",
+type Req = {
+  method?: string;
+  body?: any;
 };
 
-type Payload = {
-  to: string;
-  submittedBy: string;
-  name: string;
-  period: { id: string; label: string; startISO: string; endISO: string; invoiceDateISO: string };
-  totals: { hours: number; expenses: number };
-  entries: any[];
-  pdfBase64: string;
-  pdfFileName: string;
+type Res = {
+  status: (code: number) => Res;
+  json: (data: any) => void;
+  send: (data: any) => void;
+  setHeader?: (k: string, v: string) => void;
 };
 
-export default async function handler(req: any, res: any) {
+export default async function handler(req: Req, res: Res) {
+  // CORS (ajută și la preview / debug)
+  res.setHeader?.("Access-Control-Allow-Origin", "*");
+  res.setHeader?.("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader?.("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") return res.status(200).send("ok");
   if (req.method !== "POST") return res.status(405).send("Method not allowed");
 
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return res.status(500).send("Missing RESEND_API_KEY in Vercel env vars");
+
   try {
-    const key = process.env.RESEND_API_KEY;
-    if (!key) return res.status(500).send("Missing RESEND_API_KEY");
+    const body = req.body || {};
+    const collector = "borot@windpro.pl";
 
-    const body: Payload = req.body;
+    const submittedBy = String(body.submittedBy || "").trim();
+    const name = String(body.name || "").trim();
+    const periodLabel = String(body.periodLabel || "").trim();
+    const invoiceDate = String(body.invoiceDate || "").trim();
 
-    if (!body?.to) return res.status(400).send("Missing 'to'");
-    if (!body?.submittedBy) return res.status(400).send("Missing 'submittedBy'");
-    if (!body?.period?.id) return res.status(400).send("Missing period");
+    const ratePerHour = Number(body.ratePerHour ?? 0) || 0;
+    const totalHours = Number(body.totalHours ?? 0) || 0;
+    const totalExpenses = Number(body.totalExpenses ?? 0) || 0;
+    const totalPay = Number(body.totalPay ?? 0) || 0;
 
-    const resend = new Resend(key);
+    const pdfBase64 = String(body.pdfBase64 || "");
+    if (!pdfBase64) return res.status(400).send("Missing pdfBase64");
 
-    const pdfBuffer = Buffer.from(body.pdfBase64 || "", "base64");
-    if (!pdfBuffer.length) return res.status(400).send("Missing PDF");
+    const pdfBuffer = Buffer.from(pdfBase64, "base64");
 
-    const text = [
-      "WindPro TimeSheet submission",
-      "",
-      `Submitted by: ${body.submittedBy}`,
-      `Name: ${body.name || "-"}`,
-      `Period: ${body.period.label} (${body.period.startISO} → ${body.period.endISO})`,
-      `Invoice date: ${body.period.invoiceDateISO}`,
-      "",
-      `Total hours: ${Number(body.totals?.hours ?? 0).toFixed(2)}`,
-      `Total expenses: € ${Number(body.totals?.expenses ?? 0).toFixed(2)}`,
-      `Entries: ${Array.isArray(body.entries) ? body.entries.length : 0}`,
-      "",
-      "PDF attached.",
-    ].join("\n");
+    const resend = new Resend(apiKey);
 
     await resend.emails.send({
-      from: "WindPro Timesheet <onboarding@resend.dev>",
-      to: [body.to],
-      subject: `Timesheet ${body.period.id} — ${body.submittedBy}`,
-      text,
+      // IMPORTANT: dacă nu ai domeniu verificat în Resend, folosește onboarding@resend.dev
+      from: "WindPro TimeSheet <onboarding@resend.dev>",
+      to: [collector],
+      subject: `WindPro TimeSheet — ${periodLabel || "Period"} — ${name || submittedBy || "Unknown"}`,
+      text:
+        `Submitted by: ${submittedBy || "-"}\n` +
+        `Name: ${name || "-"}\n` +
+        `Period: ${periodLabel || "-"}\n` +
+        `Invoice date: ${invoiceDate || "-"}\n\n` +
+        `Rate: €${ratePerHour.toFixed(2)}/h\n` +
+        `Hours: ${totalHours.toFixed(2)}\n` +
+        `Expenses: €${totalExpenses.toFixed(2)}\n` +
+        `Pay: €${totalPay.toFixed(2)}\n`,
       attachments: [
         {
-          filename: body.pdfFileName || `WindPro_TimeSheet_${body.period.id}.pdf`,
+          filename: `WindPro_TimeSheet_${(periodLabel || "period").replace(/\s+/g, "_")}.pdf`,
           content: pdfBuffer,
         },
       ],
@@ -63,6 +69,6 @@ export default async function handler(req: any, res: any) {
 
     return res.status(200).json({ ok: true });
   } catch (err: any) {
-    return res.status(500).send(err?.message || "Server error");
+    return res.status(500).send(`Email failed: ${err?.message || "Unknown error"}`);
   }
 }
