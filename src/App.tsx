@@ -115,6 +115,9 @@ const EXP_TYPES: ExpenseType[] = ["Taxi", "Hotel", "Food", "Diesel", "Extra lugg
 const PLATFORM_TYPES: PlatformType[] = ["SOV", "Jack-up", "CTV / Harbour", "N/A"];
 const VESSEL_PRESETS = ["Blue Tern", "Discovery Wind", "Apollo Wind", "Nobelwind", "Aeolus", "SOV (Other)", "Jack-up (Other)"];
 
+void PLATFORM_TYPES;
+void VESSEL_PRESETS;
+
 /** ---------------- HELPERS ---------------- */
 
 function uid(prefix = "id") {
