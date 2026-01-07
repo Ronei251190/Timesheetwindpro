@@ -1,12 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-  addMonths,
-  endOfMonth,
-  format,
-  getDaysInMonth,
-  parseISO,
-  startOfMonth,
-} from "date-fns";
+import { addMonths, endOfMonth, format, getDaysInMonth, parseISO, startOfMonth } from "date-fns";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 
@@ -56,7 +49,6 @@ type DayEntry = {
   vesselManual: string;
 
   workNote: string;
-
   expenses: Expense[];
 };
 
@@ -70,7 +62,7 @@ type StoredUser = {
 type AppState = {
   loginEmail: string;
   selectedPeriodId: string; // YYYY-MM
-  selectedDateISO: string;  // YYYY-MM-DD
+  selectedDateISO: string; // YYYY-MM-DD
 
   lockedPeriodIds: string[];
 
@@ -90,8 +82,8 @@ type Period = {
 
 /** ===================== CONSTS ===================== */
 
-const LS_KEY = "windpro_timesheet_v8_pdf_like_screenshot";
-const ADMIN_PASSWORD = "1234"; // schimbă aici
+const LS_KEY = "windpro_timesheet_v9_full";
+const ADMIN_PASSWORD = "1234"; // schimbă aici parola admin
 
 const WORK_TYPES: WorkType[] = [
   "Offshore (Harbour / CTV) DAY SHIFT",
@@ -227,6 +219,7 @@ const input: React.CSSProperties = {
   fontFamily: "inherit",
   fontSize: 16,
 };
+
 const strongInput: React.CSSProperties = {
   width: "100%",
   padding: 10,
@@ -235,7 +228,9 @@ const strongInput: React.CSSProperties = {
   fontFamily: "inherit",
   fontSize: 16,
 };
+
 const lbl: React.CSSProperties = { opacity: 0.8, marginBottom: 6 };
+
 const smallBtn: React.CSSProperties = {
   padding: "10px 12px",
   borderRadius: 12,
@@ -244,6 +239,7 @@ const smallBtn: React.CSSProperties = {
   cursor: "pointer",
   fontWeight: 700,
 };
+
 const btnBlue: React.CSSProperties = {
   padding: "12px 14px",
   borderRadius: 12,
@@ -254,6 +250,7 @@ const btnBlue: React.CSSProperties = {
   cursor: "pointer",
   whiteSpace: "nowrap",
 };
+
 const btnGreen: React.CSSProperties = {
   padding: "12px 14px",
   borderRadius: 12,
@@ -264,6 +261,7 @@ const btnGreen: React.CSSProperties = {
   cursor: "pointer",
   whiteSpace: "nowrap",
 };
+
 const btnDark: React.CSSProperties = {
   padding: "12px 14px",
   borderRadius: 12,
@@ -276,6 +274,7 @@ const btnDark: React.CSSProperties = {
 };
 
 /** ===================== STYLES (PDF) ===================== */
+/** (Micșorate + title WindProTimesheet MCE) */
 
 const pdfBox: React.CSSProperties = {
   border: "1px solid #eee",
@@ -285,31 +284,31 @@ const pdfBox: React.CSSProperties = {
 };
 
 const pdfH1: React.CSSProperties = {
-  fontSize: 42,
+  fontSize: 32, // mai mic
   fontWeight: 900,
-  margin: "0 0 18px 0",
+  margin: "0 0 14px 0",
 };
 
 const pdfTitle: React.CSSProperties = {
-  fontSize: 30,
+  fontSize: 22, // mai mic
   fontWeight: 900,
-  margin: "26px 0 12px",
+  margin: "18px 0 10px",
 };
 
 const pdfTh: React.CSSProperties = {
   border: "1px solid #e5e5e5",
-  padding: "10px 10px",
+  padding: "6px 6px",
   textAlign: "left",
   fontWeight: 800,
   background: "#f5f6f8",
-  fontSize: 14,
+  fontSize: 12,
 };
 
 const pdfTd: React.CSSProperties = {
   border: "1px solid #e5e5e5",
-  padding: "10px 10px",
+  padding: "6px 6px",
   verticalAlign: "top",
-  fontSize: 14,
+  fontSize: 12,
 };
 
 /** ===================== UI COMPONENTS ===================== */
@@ -398,6 +397,7 @@ export default function App() {
   );
 
   const activeEmail = useMemo(() => normalizeEmail(state.loginEmail), [state.loginEmail]);
+
   const activeUser = useMemo<StoredUser>(() => {
     if (!activeEmail) return makeDefaultUser();
     return state.users[activeEmail] || makeDefaultUser();
@@ -416,9 +416,10 @@ export default function App() {
     if (!inRangeISO(state.selectedDateISO, selectedPeriod.startISO, selectedPeriod.endISO)) {
       setState((p) => ({ ...p, selectedDateISO: selectedPeriod.startISO, multiSelectedISOs: [] }));
     }
-  }, [selectedPeriod.id]);
+  }, [selectedPeriod.id, selectedPeriod.startISO, selectedPeriod.endISO, state.selectedDateISO]);
 
   const entries = activeUser.entries || {};
+
   const currentEntry: DayEntry = useMemo(
     () => entries[state.selectedDateISO] || makeDefaultEntry(state.selectedDateISO),
     [entries, state.selectedDateISO]
@@ -458,7 +459,7 @@ export default function App() {
     });
   };
 
-  /** ===== Calendar month (from selected period) ===== */
+  /** ===== Calendar month ===== */
   const monthStart = useMemo(() => startOfMonth(parseISO(selectedPeriod.startISO)), [selectedPeriod.startISO]);
   const monthLabel = useMemo(() => format(monthStart, "MMMM yyyy"), [monthStart]);
 
@@ -512,6 +513,7 @@ export default function App() {
       return { ...p, multiSelectedISOs: Array.from(set) };
     });
   };
+
   const clearMultiSelection = () => setState((p) => ({ ...p, multiSelectedISOs: [] }));
 
   const onCalendarPick = (iso: string) => {
@@ -618,7 +620,9 @@ export default function App() {
 
   /** ===== Lock / Unlock ===== */
   const lockPeriod = () => {
-    setState((p) => (p.lockedPeriodIds.includes(selectedPeriod.id) ? p : { ...p, lockedPeriodIds: [...p.lockedPeriodIds, selectedPeriod.id] }));
+    setState((p) =>
+      p.lockedPeriodIds.includes(selectedPeriod.id) ? p : { ...p, lockedPeriodIds: [...p.lockedPeriodIds, selectedPeriod.id] }
+    );
   };
 
   const unlockAdmin = () => {
@@ -627,7 +631,85 @@ export default function App() {
     setState((p) => ({ ...p, lockedPeriodIds: p.lockedPeriodIds.filter((id) => id !== selectedPeriod.id) }));
   };
 
-  /** ===== Submit (LOCK) – email îl facem după ===== */
+  /** ===== PDF Base64 builder (for email attach) ===== */
+  const buildPdfBase64 = async () => {
+    const root = document.getElementById("pdf-root");
+    if (!root) throw new Error("PDF template missing (#pdf-root).");
+    await new Promise((r) => setTimeout(r, 50));
+
+    const canvas = await html2canvas(root, {
+      scale: 2,
+      backgroundColor: "#ffffff",
+      useCORS: true,
+      logging: false,
+    });
+
+    const imgData = canvas.toDataURL("image/png");
+    const pdf = new jsPDF("p", "pt", "a4");
+
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+
+    const imgWidth = pageWidth;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+    let remaining = imgHeight;
+    let y = 0;
+
+    pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
+    remaining -= pageHeight;
+
+    while (remaining > 0) {
+      pdf.addPage();
+      y = -(imgHeight - remaining);
+      pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
+      remaining -= pageHeight;
+    }
+
+    return pdf.output("datauristring"); // data:application/pdf;base64,...
+  };
+
+  /** ===== Export PDF (Period) ===== */
+  const exportPdfPeriod = async () => {
+    if (!activeEmail) return alert("Bagă Login email.");
+    const root = document.getElementById("pdf-root");
+    if (!root) return alert("PDF template missing (#pdf-root).");
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    const canvas = await html2canvas(root, {
+      scale: 2,
+      backgroundColor: "#ffffff",
+      useCORS: true,
+      logging: false,
+    });
+
+    const imgData = canvas.toDataURL("image/png");
+    const pdf = new jsPDF("p", "pt", "a4");
+
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+
+    const imgWidth = pageWidth;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+    let remaining = imgHeight;
+    let y = 0;
+
+    pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
+    remaining -= pageHeight;
+
+    while (remaining > 0) {
+      pdf.addPage();
+      y = -(imgHeight - remaining);
+      pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
+      remaining -= pageHeight;
+    }
+
+    pdf.save(`WindProTimesheet_MCE_${selectedPeriod.id}_${activeEmail}.pdf`);
+  };
+
+  /** ===== Submit: send email + lock (only if email OK) ===== */
   const submitEmailAndLock = async () => {
     if (!activeEmail) return alert("Bagă Login email.");
     if (!trim1(activeUser.name)) return alert("Bagă Name.");
@@ -637,12 +719,33 @@ export default function App() {
     setSubmitMsg("");
 
     try {
-      // momentan doar lock (email îl conectăm imediat după ce PDF e gata)
+      const pdfBase64 = await buildPdfBase64();
+      const filename = `WindProTimesheet_MCE_${selectedPeriod.id}_${activeEmail}.pdf`;
+
+      const resp = await fetch("/api/send-timesheet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          submittedByEmail: activeEmail,
+          submittedByName: activeUser.name,
+          periodLabel: selectedPeriod.label,
+          invoiceDateISO: selectedPeriod.invoiceDateISO,
+          totals,
+          pdfBase64,
+          filename,
+        }),
+      });
+
+      const data = await resp.json().catch(() => null);
+
+      if (!resp.ok || !data?.ok) {
+        throw new Error(data?.error || "Email failed (check Vercel logs / env vars).");
+      }
+
       lockPeriod();
-      await new Promise((r) => setTimeout(r, 250));
-      setSubmitMsg("✅ Submitted & locked. (Email next step)");
-    } catch {
-      setSubmitMsg("❌ Submit failed.");
+      setSubmitMsg("✅ Email sent + period locked.");
+    } catch (e: any) {
+      setSubmitMsg(`❌ Submit failed: ${e?.message || "unknown error"}`);
     } finally {
       setSubmitBusy(false);
       setSubmitMenuOpen(false);
@@ -712,55 +815,15 @@ export default function App() {
     setCopyColleagueOpen(false);
   };
 
-  /** ===== PDF Export (HTML -> Canvas -> jsPDF) ===== */
-  const exportPdfPeriod = async () => {
-    if (!activeEmail) return alert("Bagă Login email.");
-    const root = document.getElementById("pdf-root");
-    if (!root) return alert("PDF template missing (#pdf-root).");
-
-    // mic delay ca să se apuce layout-ul complet
-    await new Promise((r) => setTimeout(r, 50));
-
-    const canvas = await html2canvas(root, {
-      scale: 2,
-      backgroundColor: "#ffffff",
-      useCORS: true,
-      logging: false,
-    });
-
-    const imgData = canvas.toDataURL("image/png");
-    const pdf = new jsPDF("p", "pt", "a4");
-
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-
-    const imgWidth = pageWidth;
-    const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-    let remaining = imgHeight;
-    let y = 0;
-
-    pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
-    remaining -= pageHeight;
-
-    while (remaining > 0) {
-      pdf.addPage();
-      y = -(imgHeight - remaining);
-      pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
-      remaining -= pageHeight;
-    }
-
-    pdf.save(`Timesheet_${selectedPeriod.id}_${activeEmail}.pdf`);
-  };
-
   /** ===== derived for PDF header time ===== */
-  const generatedStr = useMemo(() => format(new Date(), "MM/dd/yyyy, h:mm a"), [state.selectedPeriodId, state.selectedDateISO]);
+  const generatedStr = useMemo(() => format(new Date(), "MM/dd/yyyy, h:mm a"), [state.selectedPeriodId]);
 
+  /** ===== UI ===== */
   return (
     <div style={{ maxWidth: 1280, margin: "0 auto", padding: 18, fontFamily: "Georgia, 'Times New Roman', serif" }}>
       <h1 style={{ margin: "0 0 4px 0" }}>WindPro TimeSheet</h1>
       <div style={{ opacity: 0.7, marginBottom: 12 }}>
-        PDF pe perioada selectată. Submit = lock. Copy = multi-select. Unlock = admin.
+        PDF pe perioada selectată. Submit = email + lock. Copy = multi-select. Unlock = admin.
       </div>
 
       {/* TOP BAR */}
@@ -827,11 +890,7 @@ export default function App() {
 
           {/* SUBMIT DROPDOWN */}
           <div style={{ position: "relative" }}>
-            <button
-              onClick={() => setSubmitMenuOpen((v) => !v)}
-              style={btnGreen}
-              disabled={!activeEmail || submitBusy}
-            >
+            <button onClick={() => setSubmitMenuOpen((v) => !v)} style={btnGreen} disabled={!activeEmail || submitBusy}>
               Submit ▾
             </button>
 
@@ -855,7 +914,7 @@ export default function App() {
                   disabled={!activeEmail || isLocked || submitBusy}
                   onClick={submitEmailAndLock}
                 >
-                  Submit (lock period)
+                  Submit (email + lock period)
                 </button>
 
                 <button
@@ -1043,11 +1102,7 @@ export default function App() {
               </div>
             </div>
 
-            <button
-              onClick={clearDay}
-              style={{ ...smallBtn, borderColor: "#f0bcbc", color: "#b55" }}
-              disabled={!activeEmail || isLocked}
-            >
+            <button onClick={clearDay} style={{ ...smallBtn, borderColor: "#f0bcbc", color: "#b55" }} disabled={!activeEmail || isLocked}>
               Clear day
             </button>
           </div>
@@ -1237,11 +1292,7 @@ export default function App() {
                       placeholder="note..."
                     />
 
-                    <button
-                      onClick={() => removeExpense(ex.id)}
-                      style={{ ...smallBtn, borderColor: "#eee" }}
-                      disabled={!activeEmail || isLocked}
-                    >
+                    <button onClick={() => removeExpense(ex.id)} style={{ ...smallBtn, borderColor: "#eee" }} disabled={!activeEmail || isLocked}>
                       ✕
                     </button>
                   </div>
@@ -1316,12 +1367,12 @@ export default function App() {
             background: "white",
           }}
         >
-          <div style={pdfH1}>Timesheet</div>
+          <div style={pdfH1}>WindProTimesheet MCE</div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 18 }}>
             {/* Left box */}
             <div style={pdfBox}>
-              <div style={{ fontSize: 22, lineHeight: 1.8 }}>
+              <div style={{ fontSize: 16, lineHeight: 1.6 }}>
                 <div>
                   <span style={{ opacity: 0.75 }}>Period:</span> {selectedPeriod.label}
                 </div>
@@ -1342,15 +1393,13 @@ export default function App() {
 
             {/* Right box */}
             <div style={pdfBox}>
-              <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.8 }}>
+              <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.6 }}>
                 <div>Total hours: {(Number(totals.hours) || 0).toFixed(2)}</div>
                 <div>Total expenses: € {(Number(totals.expenses) || 0).toFixed(2)}</div>
                 <div>Total pay: € {(Number(totals.pay) || 0).toFixed(2)}</div>
               </div>
 
-              <div style={{ marginTop: 22, fontSize: 18, opacity: 0.85 }}>
-                Generated: {generatedStr}
-              </div>
+              <div style={{ marginTop: 16, fontSize: 14, opacity: 0.85 }}>Generated: {generatedStr}</div>
             </div>
           </div>
 
@@ -1401,10 +1450,10 @@ export default function App() {
             </tbody>
           </table>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginTop: 26, alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginTop: 18, alignItems: "start" }}>
             <div>
-              <div style={{ fontSize: 34, fontWeight: 900, marginBottom: 12 }}>Totals</div>
-              <div style={{ fontSize: 22, lineHeight: 1.8 }}>
+              <div style={{ fontSize: 26, fontWeight: 900, marginBottom: 10 }}>Totals</div>
+              <div style={{ fontSize: 16, lineHeight: 1.6 }}>
                 <div>Hours: {(Number(totals.hours) || 0).toFixed(2)}</div>
                 <div>Expenses: € {(Number(totals.expenses) || 0).toFixed(2)}</div>
                 <div>
@@ -1415,8 +1464,8 @@ export default function App() {
             </div>
 
             <div>
-              <div style={{ fontSize: 34, fontWeight: 900, marginBottom: 12 }}>Signature</div>
-              <div style={{ border: "1px solid #eee", borderRadius: 10, height: 190, overflow: "hidden" }}>
+              <div style={{ fontSize: 26, fontWeight: 900, marginBottom: 10 }}>Signature</div>
+              <div style={{ border: "1px solid #eee", borderRadius: 10, height: 180, overflow: "hidden" }}>
                 {activePeriodSig ? (
                   <img src={activePeriodSig} alt="signature" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                 ) : null}
