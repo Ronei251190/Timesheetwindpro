@@ -833,10 +833,6 @@ const submitEmailAndLock = async () => {
     `;
 
     // 5) PDF -> base64 (fără prefix)
-    const dataUri = pdf.output("datauristring"); // "data:application/pdf;...;base64,XXXX"
-    const pdfBase64 = dataUri.split(",")[1] || "";
-    const filename = `WindPro_TimeSheet_MCE_${selectedPeriod.id}_${activeEmail}.pdf`;
-
     // API base (local -> trimite către vercel, pe vercel -> trimite relativ)
 const API_BASE =
   window.location.hostname === "localhost"
@@ -845,7 +841,7 @@ const API_BASE =
     const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to, subject, html, pdfBase64, filename }),
+      body: JSON.stringify({ to, subject, html,}),
     });
 
     const data = await resp.json().catch(() => null);
