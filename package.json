@@ -19,6 +19,7 @@
     "jspdf": "^4.0.0",
     "jspdf-autotable": "^5.0.7",
     "nodemailer": "^7.0.12",
+    "pdfkit": "^0.17.2",
     "react": "^19.2.0",
     "react-day-picker": "^9.13.0",
     "react-dom": "^19.2.0",
@@ -28,6 +29,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@types/node": "^24.10.1",
+    "@types/nodemailer": "^7.0.4",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
     "@vercel/node": "^5.5.16",
