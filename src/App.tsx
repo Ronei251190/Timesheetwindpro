@@ -841,7 +841,31 @@ const API_BASE =
     const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to, subject, html,}),
+   body: JSON.stringify({
+  to,
+  subject,
+
+  user: {
+    name: activeUser.name,
+    email: activeEmail,
+  },
+
+  period: {
+    id: selectedPeriod.id,
+    label: selectedPeriod.label,
+    from: selectedPeriod.from,
+    to: selectedPeriod.to,
+  },
+
+  totals: {
+    hours: totals.hours,
+    pay: totals.pay,
+    expenses: totals.expenses,
+  },
+
+  days: Object.values(daysByDate),
+}),
+
     });
 
     const data = await resp.json().catch(() => null);
