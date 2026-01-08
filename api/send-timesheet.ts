@@ -1,62 +1,37 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ ok: false, error: "Method not allowed" });
+  }
+
   try {
-    if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+    const { to, subject, html, pdfBase64, filename } = req.body;
 
-    const apiKey = process.env.RESEND_API_KEY;
-    const toDefault = process.env.TIMESHEET_TO_EMAIL;
-    const fromEmail = process.env.EMAIL_FROM || "WindPro Timesheet <onboarding@resend.dev>";
-
-    if (!apiKey) return res.status(500).json({ ok: false, error: "Missing RESEND_API_KEY" });
-    if (!toDefault) return res.status(500).json({ ok: false, error: "Missing TIMESHEET_TO_EMAIL" });
-
-    const {
-      submittedByEmail,
-      submittedByName,
-      periodLabel,
-      invoiceDateISO,
-      totals,
-      pdfBase64,
-      filename,
-      toEmail,
-    } = req.body || {};
-
-    if (!submittedByEmail || !periodLabel || !pdfBase64) {
-      return res.status(400).json({ ok: false, error: "Missing required fields" });
+    if (!to || !subject || !html || !pdfBase64 || !filename) {
+      return res.status(400).json({ ok: false, error: "Missing fields" });
     }
 
-    const resend = new Resend(apiKey);
-    const safeTo = typeof toEmail === "string" && toEmail.includes("@") ? toEmail : toDefault;
+   const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: Number(process.env.SMTP_PORT || 465),
+  secure: true, // ✅ pentru 465 (SSL)
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
 
-    const subject = `Timesheet ${periodLabel} — ${submittedByName || submittedByEmail}`;
-
-    const html = `
-      <div style="font-family: Arial, Helvetica, sans-serif;">
-        <h2>Timesheet submitted</h2>
-        <p><b>Submitted by:</b> ${submittedByName || "-"} (${submittedByEmail})</p>
-        <p><b>Period:</b> ${periodLabel}</p>
-        <p><b>Invoice date:</b> ${invoiceDateISO || "-"}</p>
-        <p><b>Total hours:</b> ${Number(totals?.hours || 0).toFixed(2)}</p>
-        <p><b>Total expenses:</b> € ${Number(totals?.expenses || 0).toFixed(2)}</p>
-        <p><b>Total pay:</b> € ${Number(totals?.pay || 0).toFixed(2)}</p>
-        <hr />
-        <p>PDF attached.</p>
-      </div>
-    `;
-
-    const base64 = String(pdfBase64).replace(/^data:application\/pdf;base64,/, "");
-
-    await resend.emails.send({
-      from: fromEmail,
-      to: safeTo,
+    await transporter.sendMail({
+      from: process.env.MAIL_FROM || process.env.SMTP_USER,
+      to,
       subject,
       html,
       attachments: [
         {
-          filename: filename || `Timesheet_${periodLabel}.pdf`,
-          content: base64,
+          filename,
+          content: Buffer.from(pdfBase64, "base64"),
           contentType: "application/pdf",
         },
       ],
@@ -64,6 +39,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(200).json({ ok: true });
   } catch (err: any) {
-    return res.status(500).json({ ok: false, error: err?.message || "Server error" });
+    console.error(err);
+    return res.status(500).json({ ok: false, error: err.message });
   }
 }

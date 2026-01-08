@@ -40,6 +40,7 @@ type ExpenseType =
   | "Extra luggage"
   | "PPE"
   | "Other";
+
 type PlatformType = "SOV" | "Jack-up" | "CTV / Harbour" | "N/A";
 
 type Expense = {
@@ -47,6 +48,10 @@ type Expense = {
   type: ExpenseType;
   amount: number;
   note: string;
+
+  /** ✅ attachments (receipt/invoice) */
+  fileName?: string;
+  fileDataUrl?: string; // image/* or pdf as dataURL
 };
 
 type DayEntry = {
@@ -55,7 +60,7 @@ type DayEntry = {
   workType: WorkType;
   hours: number;
 
-  // ✅ IMPORTANT: RATE PER DAY (fix-ul)
+  /** ✅ IMPORTANT: rate saved PER DAY (fixes travel/day vs night/day issue) */
   ratePerHour: number;
 
   location: string;
@@ -72,8 +77,10 @@ type DayEntry = {
 
 type StoredUser = {
   name: string;
-  // (păstrăm și rate global ca fallback / default)
-  ratePerHour: number;
+
+  /** optional convenience default (used to prefill new days) */
+  defaultRatePerHour: number;
+
   entries: Record<string, DayEntry>;
   signatureByPeriod: Record<string, string | null>; // key YYYY-MM
 };
@@ -101,7 +108,7 @@ type Period = {
 
 /** ===================== CONSTS ===================== */
 
-const LS_KEY = "windpro_timesheet_v9_rate_per_day";
+const LS_KEY = "windpro_timesheet_v9_day_rate_pdf_mce";
 const ADMIN_PASSWORD = "1234"; // schimbă aici
 
 const WORK_TYPES: WorkType[] = [
@@ -134,7 +141,9 @@ const EXP_TYPES: ExpenseType[] = [
   "PPE",
   "Other",
 ];
+
 const PLATFORM_TYPES: PlatformType[] = ["SOV", "Jack-up", "CTV / Harbour", "N/A"];
+
 const VESSEL_PRESETS = [
   "Blue Tern",
   "Discovery Wind",
@@ -178,12 +187,58 @@ function inRangeISO(dateISO: string, startISO: string, endISO: string) {
   return dateISO >= startISO && dateISO <= endISO;
 }
 
-function makeDefaultEntry(dateISO: string, defaultRate = 0): DayEntry {
+/** ✅ ExpenseType guard + normalize (fix TS + fix old storage) */
+const isExpenseType = (v: string): v is ExpenseType =>
+  (EXP_TYPES as readonly string[]).includes(v);
+
+const normalizeExpenseType = (v: any): ExpenseType => {
+  const s = String(v ?? "");
+  return isExpenseType(s) ? s : "Other";
+};
+
+/** ✅ migrate old state (fix for old expenses type:string) */
+function migrateState(s: AppState): AppState {
+  const next: AppState = {
+    ...s,
+    lockedPeriodIds: Array.isArray(s.lockedPeriodIds) ? s.lockedPeriodIds : [],
+    multiMode: !!s.multiMode,
+    multiSelectedISOs: Array.isArray(s.multiSelectedISOs) ? s.multiSelectedISOs : [],
+    users: s.users || {},
+  };
+
+  for (const email of Object.keys(next.users || {})) {
+    const u = next.users[email];
+    if (!u) continue;
+    u.entries = u.entries || {};
+    u.signatureByPeriod = u.signatureByPeriod || {};
+    for (const d of Object.keys(u.entries)) {
+      const e = u.entries[d];
+      if (!e) continue;
+      e.expenses = Array.isArray(e.expenses) ? e.expenses : [];
+      e.expenses = e.expenses.map((x: any) => ({
+        id: String(x?.id || uid("exp")),
+        type: normalizeExpenseType(x?.type),
+        amount: clampNum(x?.amount, 0),
+        note: String(x?.note || ""),
+        fileName: x?.fileName ? String(x.fileName) : undefined,
+        fileDataUrl: x?.fileDataUrl ? String(x.fileDataUrl) : undefined,
+      }));
+    }
+  }
+
+  return next;
+}
+
+function makeDefaultUser(): StoredUser {
+  return { name: "", defaultRatePerHour: 0, entries: {}, signatureByPeriod: {} };
+}
+
+function makeDefaultEntry(dateISO: string, defaultRatePerHour: number): DayEntry {
   return {
     dateISO,
     workType: "Offshore Night Shift (SOV)",
     hours: 0,
-    ratePerHour: defaultRate,
+    ratePerHour: clampNum(defaultRatePerHour, 0),
     location: "",
     serviceWorker: "",
     platformType: "SOV",
@@ -192,9 +247,6 @@ function makeDefaultEntry(dateISO: string, defaultRate = 0): DayEntry {
     workNote: "",
     expenses: [],
   };
-}
-function makeDefaultUser(): StoredUser {
-  return { name: "", ratePerHour: 0, entries: {}, signatureByPeriod: {} };
 }
 
 function generateMonthlyPeriods(fromYear = 2025, toYear = 2050): Period[] {
@@ -232,15 +284,8 @@ const DEFAULT_STATE: AppState = {
 };
 
 function loadState(): AppState {
-  const s = safeParse<AppState>(localStorage.getItem(LS_KEY), DEFAULT_STATE);
-  return {
-    ...DEFAULT_STATE,
-    ...s,
-    lockedPeriodIds: Array.isArray(s.lockedPeriodIds) ? s.lockedPeriodIds : [],
-    multiMode: !!s.multiMode,
-    multiSelectedISOs: Array.isArray(s.multiSelectedISOs) ? s.multiSelectedISOs : [],
-    users: s.users || {},
-  };
+  const raw = safeParse<AppState>(localStorage.getItem(LS_KEY), DEFAULT_STATE);
+  return migrateState({ ...DEFAULT_STATE, ...raw });
 }
 function saveState(s: AppState) {
   localStorage.setItem(LS_KEY, JSON.stringify(s));
@@ -305,40 +350,48 @@ const btnDark: React.CSSProperties = {
 };
 
 /** ===================== STYLES (PDF) ===================== */
+/** ✅ Made fonts smaller + added "WindPro Timesheet MCE" */
 
 const pdfBox: React.CSSProperties = {
   border: "1px solid #eee",
   borderRadius: 10,
-  padding: 18,
+  padding: 16,
   background: "white",
 };
 
 const pdfH1: React.CSSProperties = {
-  fontSize: 40,
+  fontSize: 34,
   fontWeight: 900,
-  margin: "0 0 18px 0",
+  margin: "0 0 6px 0",
+};
+
+const pdfSub: React.CSSProperties = {
+  fontSize: 14,
+  fontWeight: 700,
+  opacity: 0.8,
+  margin: "0 0 14px 0",
 };
 
 const pdfTitle: React.CSSProperties = {
-  fontSize: 28,
+  fontSize: 22,
   fontWeight: 900,
-  margin: "26px 0 12px",
+  margin: "18px 0 10px",
 };
 
 const pdfTh: React.CSSProperties = {
   border: "1px solid #e5e5e5",
-  padding: "10px 10px",
+  padding: "8px 8px",
   textAlign: "left",
   fontWeight: 800,
   background: "#f5f6f8",
-  fontSize: 13,
+  fontSize: 12,
 };
 
 const pdfTd: React.CSSProperties = {
   border: "1px solid #e5e5e5",
-  padding: "10px 10px",
+  padding: "8px 8px",
   verticalAlign: "top",
-  fontSize: 13,
+  fontSize: 12,
 };
 
 /** ===================== UI COMPONENTS ===================== */
@@ -435,6 +488,7 @@ export default function App() {
   );
 
   const activeEmail = useMemo(() => normalizeEmail(state.loginEmail), [state.loginEmail]);
+
   const activeUser = useMemo<StoredUser>(() => {
     if (!activeEmail) return makeDefaultUser();
     return state.users[activeEmail] || makeDefaultUser();
@@ -448,26 +502,21 @@ export default function App() {
     });
   }, [activeEmail]);
 
+  // keep selectedDate inside period
   useEffect(() => {
     if (!inRangeISO(state.selectedDateISO, selectedPeriod.startISO, selectedPeriod.endISO)) {
       setState((p) => ({ ...p, selectedDateISO: selectedPeriod.startISO, multiSelectedISOs: [] }));
     }
-  }, [selectedPeriod.id]);
+  }, [selectedPeriod.id, selectedPeriod.startISO, selectedPeriod.endISO, state.selectedDateISO]);
 
   const entries = activeUser.entries || {};
 
-  // ✅ currentEntry: dacă lipsește, default cu fallback la rate user
+  /** ✅ currentEntry contains ratePerHour per day */
   const currentEntry: DayEntry = useMemo(() => {
-    const existing = entries[state.selectedDateISO];
-    if (existing) {
-      // migrare soft: dacă nu are ratePerHour, ia din user
-      if (typeof (existing as any).ratePerHour !== "number") {
-        return { ...existing, ratePerHour: clampNum(activeUser.ratePerHour, 0) } as DayEntry;
-      }
-      return existing;
-    }
-    return makeDefaultEntry(state.selectedDateISO, clampNum(activeUser.ratePerHour, 0));
-  }, [entries, state.selectedDateISO, activeUser.ratePerHour]);
+    const e = entries[state.selectedDateISO];
+    if (e) return e;
+    return makeDefaultEntry(state.selectedDateISO, activeUser.defaultRatePerHour);
+  }, [entries, state.selectedDateISO, activeUser.defaultRatePerHour]);
 
   const setUserPatch = (patch: Partial<StoredUser>) => {
     if (!activeEmail) return;
@@ -484,21 +533,29 @@ export default function App() {
     if (!activeEmail || isLocked) return;
     setState((prev) => {
       const u = prev.users[activeEmail] || makeDefaultUser();
-      const existingRaw = u.entries[prev.selectedDateISO];
-      const existing: DayEntry =
-        existingRaw
-          ? (typeof (existingRaw as any).ratePerHour === "number"
-              ? (existingRaw as DayEntry)
-              : ({ ...(existingRaw as any), ratePerHour: clampNum(u.ratePerHour, 0) } as DayEntry))
-          : makeDefaultEntry(prev.selectedDateISO, clampNum(u.ratePerHour, 0));
+      const existing = u.entries[prev.selectedDateISO] || makeDefaultEntry(prev.selectedDateISO, u.defaultRatePerHour);
 
-      const nextEntry: DayEntry = { ...existing, ...patch };
+      const nextExpenses: Expense[] = Array.isArray((patch as any).expenses)
+        ? ((patch as any).expenses as Expense[]).map((x: any) => ({
+            id: String(x?.id || uid("exp")),
+            type: normalizeExpenseType(x?.type),
+            amount: clampNum(x?.amount, 0),
+            note: String(x?.note || ""),
+            fileName: x?.fileName ? String(x.fileName) : undefined,
+            fileDataUrl: x?.fileDataUrl ? String(x.fileDataUrl) : undefined,
+          }))
+        : existing.expenses || [];
+
+      const nextEntry: DayEntry = {
+        ...existing,
+        ...patch,
+        dateISO: prev.selectedDateISO,
+        expenses: (patch as any).expenses ? nextExpenses : existing.expenses || [],
+      };
+
       return {
         ...prev,
-        users: {
-          ...prev.users,
-          [activeEmail]: { ...u, entries: { ...u.entries, [prev.selectedDateISO]: nextEntry } },
-        },
+        users: { ...prev.users, [activeEmail]: { ...u, entries: { ...u.entries, [prev.selectedDateISO]: nextEntry } } },
       };
     });
   };
@@ -513,27 +570,9 @@ export default function App() {
     });
   };
 
-  /** ===== Calendar ===== */
-  const monthStart = useMemo(
-    () => startOfMonth(parseISO(selectedPeriod.startISO)),
-    [selectedPeriod.startISO]
-  );
+  /** ===== Calendar month ===== */
+  const monthStart = useMemo(() => startOfMonth(parseISO(selectedPeriod.startISO)), [selectedPeriod.startISO]);
   const monthLabel = useMemo(() => format(monthStart, "MMMM yyyy"), [monthStart]);
-
-  const days = useMemo(() => {
-    const count = getDaysInMonth(monthStart);
-    const firstDay = monthStart.getDay();
-    const cells: { date: Date | null; iso?: string }[] = [];
-    for (let i = 0; i < firstDay; i++) cells.push({ date: null });
-    for (let d = 1; d <= count; d++) {
-      const dt = new Date(monthStart.getFullYear(), monthStart.getMonth(), d);
-      const iso = format(dt, "yyyy-MM-dd");
-      cells.push({ date: dt, iso });
-    }
-    while (cells.length % 7 !== 0) cells.push({ date: null });
-    return cells;
-  }, [monthStart]);
-
   const savedDatesInMonth = useMemo(() => {
     const monthStr = format(monthStart, "yyyy-MM");
     return new Set(Object.keys(entries).filter((d) => d.startsWith(monthStr)));
@@ -542,41 +581,34 @@ export default function App() {
   /** ===== Period entries + totals ===== */
   const periodEntries = useMemo(() => {
     const out: DayEntry[] = [];
-    for (const [dateISO, entry0] of Object.entries(entries)) {
-      if (!inRangeISO(dateISO, selectedPeriod.startISO, selectedPeriod.endISO)) continue;
-
-      // migrare soft pe fiecare entry
-      const e: DayEntry =
-        typeof (entry0 as any).ratePerHour === "number"
-          ? (entry0 as DayEntry)
-          : ({ ...(entry0 as any), ratePerHour: clampNum(activeUser.ratePerHour, 0) } as DayEntry);
-
-      out.push(e);
+    for (const [dateISO, entry] of Object.entries(entries)) {
+      if (inRangeISO(dateISO, selectedPeriod.startISO, selectedPeriod.endISO)) out.push(entry);
     }
     out.sort((a, b) => (a.dateISO < b.dateISO ? -1 : 1));
     return out;
-  }, [entries, selectedPeriod.startISO, selectedPeriod.endISO, activeUser.ratePerHour]);
+  }, [entries, selectedPeriod.startISO, selectedPeriod.endISO]);
 
+  /** ✅ totals pay = sum(hours * dayRate) */
   const totals = useMemo(() => {
     const hours = periodEntries.reduce((acc, e) => acc + clampNum(e.hours, 0), 0);
     const expenses = periodEntries.reduce((acc, e) => {
       const s = (e.expenses || []).reduce((a, x) => a + clampNum(x.amount, 0), 0);
       return acc + s;
     }, 0);
+    const pay = periodEntries.reduce(
+      (acc, e) => acc + clampNum(e.hours, 0) * clampNum(e.ratePerHour, 0),
+      0
+    );
 
-    // ✅ PAY = sum per day (hours * dayRate)
-    const pay = periodEntries.reduce((acc, e) => acc + clampNum(e.hours, 0) * clampNum(e.ratePerHour, 0), 0);
-
-    // rate afișat sus doar informativ: media ponderată (optional)
-    const rateAvg = hours > 0 ? pay / hours : 0;
+    const defaultRate = clampNum(activeUser.defaultRatePerHour, 0);
 
     return {
       hours: round2(hours),
       expenses: round2(expenses),
       pay: round2(pay),
-      rateAvg: round2(rateAvg),
+      defaultRate: round2(defaultRate),
     };
-  }, [periodEntries]);
+  }, [periodEntries, activeUser.defaultRatePerHour]);
 
   /** ===== Multi-select ===== */
   const multiSet = useMemo(() => new Set(state.multiSelectedISOs), [state.multiSelectedISOs]);
@@ -598,21 +630,52 @@ export default function App() {
   /** ===== Expenses ===== */
   const addExpense = () => {
     if (!activeEmail || isLocked) return;
-    const next = [
+    const next: Expense[] = [
       ...(currentEntry.expenses || []),
-      { id: uid("exp"), type: "Taxi" as ExpenseType, amount: 0, note: "" },
+      { id: uid("exp"), type: "Taxi", amount: 0, note: "" },
     ];
     setEntry({ expenses: next });
   };
+
+  /** ✅ FIX: keeps ExpenseType strict + normalizes */
   const updateExpense = (id: string, patch: Partial<Expense>) => {
     if (!activeEmail || isLocked) return;
-    const next = (currentEntry.expenses || []).map((e) => (e.id === id ? { ...e, ...patch } : e));
+
+    const next: Expense[] = (currentEntry.expenses || []).map((e) => {
+      if (e.id !== id) return e;
+
+      const merged: Expense = {
+        ...e,
+        ...patch,
+        type: normalizeExpenseType((patch as any).type ?? e.type),
+        amount: patch.amount !== undefined ? clampNum(patch.amount, 0) : e.amount,
+        note: patch.note !== undefined ? String(patch.note) : e.note,
+      };
+      return merged;
+    });
+
     setEntry({ expenses: next });
   };
+
   const removeExpense = (id: string) => {
     if (!activeEmail || isLocked) return;
-    const next = (currentEntry.expenses || []).filter((e) => e.id !== id);
+    const next: Expense[] = (currentEntry.expenses || []).filter((e) => e.id !== id);
     setEntry({ expenses: next });
+  };
+
+  /** ✅ attach file for an expense */
+  const attachExpenseFile = (expenseId: string, file: File | null) => {
+    if (!file) return;
+    if (!activeEmail || isLocked) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      updateExpense(expenseId, {
+        fileName: file.name,
+        fileDataUrl: String(reader.result || ""),
+      });
+    };
+    reader.readAsDataURL(file);
   };
 
   const dayExpenseSum = useMemo(() => {
@@ -707,33 +770,101 @@ export default function App() {
   const unlockAdmin = () => {
     const pass = window.prompt("Admin password:");
     if (pass !== ADMIN_PASSWORD) return alert("Wrong password.");
-    setState((p) => ({
-      ...p,
-      lockedPeriodIds: p.lockedPeriodIds.filter((id) => id !== selectedPeriod.id),
-    }));
+    setState((p) => ({ ...p, lockedPeriodIds: p.lockedPeriodIds.filter((id) => id !== selectedPeriod.id) }));
   };
 
-  /** ===== Submit (LOCK) ===== */
+  /** ===== Submit (LOCK only for now) ===== */
   const submitEmailAndLock = async () => {
-    if (!activeEmail) return alert("Bagă Login email.");
-    if (!trim1(activeUser.name)) return alert("Bagă Name.");
-    if (isLocked) return alert("Perioada este deja locked.");
+  if (!activeEmail) return alert("Bagă Login email.");
+  if (!trim1(activeUser.name)) return alert("Bagă Name.");
+  if (isLocked) return alert("Perioada este deja locked.");
 
-    setSubmitBusy(true);
-    setSubmitMsg("");
+  setSubmitBusy(true);
+  setSubmitMsg("");
 
-    try {
-      lockPeriod();
-      await new Promise((r) => setTimeout(r, 250));
-      setSubmitMsg("✅ Submitted & locked.");
-    } catch {
-      setSubmitMsg("❌ Submit failed.");
-    } finally {
-      setSubmitBusy(false);
-      setSubmitMenuOpen(false);
+  try {
+    // 1) găsește template-ul PDF din pagină
+    const root = document.getElementById("pdf-root");
+    if (!root) throw new Error("PDF template missing (#pdf-root).");
+
+    // 2) randare canvas din template
+    await new Promise((r) => setTimeout(r, 50));
+    const canvas = await html2canvas(root, {
+      scale: 2,
+      backgroundColor: "#ffffff",
+      useCORS: true,
+      logging: false,
+    });
+
+    // 3) canvas -> PDF
+    const pdf = new jsPDF("p", "pt", "a4");
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+
+    const imgData = canvas.toDataURL("image/png");
+    const imgWidth = pageWidth;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+    let remaining = imgHeight;
+    let y = 0;
+
+    pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
+    remaining -= pageHeight;
+
+    while (remaining > 0) {
+      pdf.addPage();
+      y = -(imgHeight - remaining);
+      pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
+      remaining -= pageHeight;
     }
-  };
 
+    // 4) PDF -> base64 (fără prefix)
+    const dataUri = pdf.output("datauristring"); // "data:application/pdf;filename=...;base64,XXXX"
+    const pdfBase64 = dataUri.split(",")[1] || "";
+
+    const to = "borot@windpro.pl"; // ✅ TEST FIX
+    const filename = `Timesheet_${selectedPeriod.id}_${activeEmail}.pdf`;
+    const subject = `WindPro TimeSheet MCE - ${selectedPeriod.id} - ${activeUser.name}`;
+    const html = `
+      <div style="font-family:Arial,sans-serif">
+        <h2>WindPro TimeSheet MCE</h2>
+        <p><b>Name:</b> ${activeUser.name}</p>
+        <p><b>Login:</b> ${activeEmail}</p>
+        <p><b>Period:</b> ${selectedPeriod.label}</p>
+        <p><b>Total hours:</b> ${(Number(totals.hours) || 0).toFixed(2)}</p>
+        <p><b>Total pay:</b> € ${(Number(totals.pay) || 0).toFixed(2)}</p>
+        <p>PDF attached.</p>
+      </div>
+    `;
+
+    // 5) Trimite către API (merge și pe Vercel, și local)
+    const API_BASE =
+  window.location.hostname === "localhost"
+    ? "https://windprotimesheet.vercel.app"
+    : "";
+   const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to, subject, html, filename, pdfBase64 }),
+    });
+
+    const data = await resp.json().catch(() => null);
+
+    if (!resp.ok || !data?.ok) {
+      throw new Error(data?.error || `Send failed (${resp.status})`);
+    }
+
+    // 6) LOCK după succes
+    lockPeriod();
+    setSubmitMsg("✅ Submitted + emailed to borot@windpro.pl + locked.");
+    setSubmitMenuOpen(false);
+  } catch (err: any) {
+    console.error(err);
+    setSubmitMsg(`❌ Submit failed: ${err?.message || "unknown error"}`);
+  } finally {
+    setSubmitBusy(false);
+  }
+};
   /** ===== Copy my day ===== */
   const applyCopyMyDay = () => {
     if (!activeEmail) return alert("Bagă Login email.");
@@ -741,14 +872,8 @@ export default function App() {
     if (state.multiSelectedISOs.length === 0) return alert("Selectează zilele target (multi-select).");
 
     const sourceISO = state.selectedDateISO;
-    const sourceEntry = entries[sourceISO] as any;
+    const sourceEntry = entries[sourceISO];
     if (!sourceEntry) return alert("Ziua sursă nu are date.");
-
-    // include rate per day în copie (dacă lipsește, îl completăm)
-    const normalizedSource: DayEntry =
-      typeof sourceEntry.ratePerHour === "number"
-        ? sourceEntry
-        : ({ ...sourceEntry, ratePerHour: clampNum(activeUser.ratePerHour, 0) } as DayEntry);
 
     const targets = state.multiSelectedISOs.filter(
       (d) => inRangeISO(d, selectedPeriod.startISO, selectedPeriod.endISO) && d !== sourceISO
@@ -758,7 +883,7 @@ export default function App() {
     setState((prev) => {
       const u = prev.users[activeEmail] || makeDefaultUser();
       const next = { ...u.entries };
-      for (const t of targets) next[t] = { ...normalizedSource, dateISO: t };
+      for (const t of targets) next[t] = { ...sourceEntry, dateISO: t };
       return { ...prev, users: { ...prev.users, [activeEmail]: { ...u, entries: next } } };
     });
 
@@ -767,11 +892,8 @@ export default function App() {
 
   /** ===== Copy colleague (code) ===== */
   const generateMyDayCode = () => {
-    const e0: any = entries[state.selectedDateISO];
-    if (!e0) return alert("Nu ai nimic salvat pe ziua selectată.");
-    const e: DayEntry =
-      typeof e0.ratePerHour === "number" ? e0 : ({ ...e0, ratePerHour: clampNum(activeUser.ratePerHour, 0) } as DayEntry);
-
+    const e = entries[state.selectedDateISO];
+    if (!e) return alert("Nu ai nimic salvat pe ziua selectată.");
     const payload = { v: 1, type: "dayEntry", entry: e };
     const code = JSON.stringify(payload);
     setColleagueCode(code);
@@ -792,14 +914,18 @@ export default function App() {
     } catch {
       return alert("Cod invalid (nu e JSON).");
     }
-    if (!parsed || parsed.v !== 1 || parsed.type !== "dayEntry" || !parsed.entry)
-      return alert("Cod invalid (format necunoscut).");
+    if (!parsed || parsed.v !== 1 || parsed.type !== "dayEntry" || !parsed.entry) return alert("Cod invalid.");
 
-    const entry0: any = parsed.entry;
-    const entry: DayEntry =
-      typeof entry0.ratePerHour === "number"
-        ? entry0
-        : ({ ...entry0, ratePerHour: clampNum(activeUser.ratePerHour, 0) } as DayEntry);
+    // ✅ normalize entry (important for old data)
+    const entry: DayEntry = parsed.entry;
+    entry.expenses = (entry.expenses || []).map((x: any) => ({
+      id: String(x?.id || uid("exp")),
+      type: normalizeExpenseType(x?.type),
+      amount: clampNum(x?.amount, 0),
+      note: String(x?.note || ""),
+      fileName: x?.fileName ? String(x.fileName) : undefined,
+      fileDataUrl: x?.fileDataUrl ? String(x.fileDataUrl) : undefined,
+    }));
 
     const targets = state.multiSelectedISOs.filter((d) => inRangeISO(d, selectedPeriod.startISO, selectedPeriod.endISO));
     if (targets.length === 0) return alert("Nu ai zile target valide.");
@@ -854,10 +980,7 @@ export default function App() {
     pdf.save(`Timesheet_${selectedPeriod.id}_${activeEmail}.pdf`);
   };
 
-  const generatedStr = useMemo(
-    () => format(new Date(), "MM/dd/yyyy, h:mm a"),
-    [state.selectedPeriodId, state.selectedDateISO]
-  );
+  const generatedStr = useMemo(() => format(new Date(), "MM/dd/yyyy, h:mm a"), [state.selectedPeriodId]);
 
   return (
     <div style={{ maxWidth: 1280, margin: "0 auto", padding: 18, fontFamily: "Georgia, 'Times New Roman', serif" }}>
@@ -930,11 +1053,7 @@ export default function App() {
 
           {/* SUBMIT DROPDOWN */}
           <div style={{ position: "relative" }}>
-            <button
-              onClick={() => setSubmitMenuOpen((v) => !v)}
-              style={btnGreen}
-              disabled={!activeEmail || submitBusy}
-            >
+            <button onClick={() => setSubmitMenuOpen((v) => !v)} style={btnGreen} disabled={!activeEmail || submitBusy}>
               Submit ▾
             </button>
 
@@ -1013,7 +1132,7 @@ export default function App() {
         <Card title="Hours (period)" big={totals.hours.toFixed(2)} />
         <Card title="Expenses (period)" big={`€ ${totals.expenses.toFixed(2)}`} />
         <Card title="Pay (period)" big={`€ ${totals.pay.toFixed(2)}`}>
-          <div>Avg rate: € {totals.rateAvg.toFixed(2)} / h</div>
+          <div style={{ opacity: 0.8 }}>Default rate: € {totals.defaultRate.toFixed(2)} / h (optional)</div>
         </Card>
       </div>
 
@@ -1052,47 +1171,60 @@ export default function App() {
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8, marginTop: 10 }}>
-            {days.map((cell, idx) => {
-              if (!cell.date || !cell.iso) return <div key={idx} style={{ height: 44 }} />;
-              const iso = cell.iso;
-              const isSelectedDay = iso === state.selectedDateISO;
-              const isMultiSelected = multiSet.has(iso);
-              const saved = savedDatesInMonth.has(iso);
+            {(() => {
+              const count = getDaysInMonth(monthStart);
+              const firstDay = monthStart.getDay();
+              const cells: { date: Date | null; iso?: string }[] = [];
+              for (let i = 0; i < firstDay; i++) cells.push({ date: null });
+              for (let d = 1; d <= count; d++) {
+                const dt = new Date(monthStart.getFullYear(), monthStart.getMonth(), d);
+                const iso = format(dt, "yyyy-MM-dd");
+                cells.push({ date: dt, iso });
+              }
+              while (cells.length % 7 !== 0) cells.push({ date: null });
 
-              return (
-                <button
-                  key={iso}
-                  onClick={() => onCalendarPick(iso)}
-                  style={{
-                    height: 44,
-                    borderRadius: 999,
-                    border: isSelectedDay ? "3px solid #1f5eff" : isMultiSelected ? "3px solid #111" : "1px solid transparent",
-                    background: isMultiSelected ? "#111" : "white",
-                    color: isMultiSelected ? "white" : "black",
-                    cursor: "pointer",
-                    position: "relative",
-                    fontWeight: 700,
-                  }}
-                  title={saved ? "Saved day" : ""}
-                >
-                  {format(cell.date, "d")}
-                  {saved ? (
-                    <span
-                      style={{
-                        position: "absolute",
-                        bottom: 6,
-                        left: "50%",
-                        transform: "translateX(-50%)",
-                        width: 6,
-                        height: 6,
-                        borderRadius: 999,
-                        background: isMultiSelected ? "white" : "#1f5eff",
-                      }}
-                    />
-                  ) : null}
-                </button>
-              );
-            })}
+              return cells.map((cell, idx) => {
+                if (!cell.date || !cell.iso) return <div key={idx} style={{ height: 44 }} />;
+                const iso = cell.iso;
+                const isSelectedDay = iso === state.selectedDateISO;
+                const isMultiSelected = multiSet.has(iso);
+                const saved = savedDatesInMonth.has(iso);
+
+                return (
+                  <button
+                    key={iso}
+                    onClick={() => onCalendarPick(iso)}
+                    style={{
+                      height: 44,
+                      borderRadius: 999,
+                      border: isSelectedDay ? "3px solid #1f5eff" : isMultiSelected ? "3px solid #111" : "1px solid transparent",
+                      background: isMultiSelected ? "#111" : "white",
+                      color: isMultiSelected ? "white" : "black",
+                      cursor: "pointer",
+                      position: "relative",
+                      fontWeight: 700,
+                    }}
+                    title={saved ? "Saved day" : ""}
+                  >
+                    {format(cell.date, "d")}
+                    {saved ? (
+                      <span
+                        style={{
+                          position: "absolute",
+                          bottom: 6,
+                          left: "50%",
+                          transform: "translateX(-50%)",
+                          width: 6,
+                          height: 6,
+                          borderRadius: 999,
+                          background: isMultiSelected ? "white" : "#1f5eff",
+                        }}
+                      />
+                    ) : null}
+                  </button>
+                );
+              });
+            })()}
           </div>
 
           <div style={{ marginTop: 18 }}>
@@ -1189,7 +1321,7 @@ export default function App() {
               </label>
 
               <label>
-                <div style={lbl}>Payment rate (€ / hour)</div>
+                <div style={lbl}>Payment rate (€ / hour) (per day)</div>
                 <input
                   value={currentEntry.ratePerHour}
                   disabled={!activeEmail || isLocked}
@@ -1205,6 +1337,24 @@ export default function App() {
 
             <div style={{ marginTop: 10, opacity: 0.8 }}>
               Day pay: <b>€ {dayPay.toFixed(2)}</b> | Day expenses: <b>€ {dayExpenseSum.toFixed(2)}</b>
+            </div>
+
+            {/* Optional default rate */}
+            <div style={{ marginTop: 10, padding: 12, borderRadius: 12, border: "1px solid #eee", background: "#fafafa" }}>
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>Default rate (optional)</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: 12, alignItems: "end" }}>
+                <div style={{ opacity: 0.8 }}>Setează o rată default ca să se pre-completeze automat pentru zilele noi.</div>
+                <input
+                  value={activeUser.defaultRatePerHour}
+                  disabled={!activeEmail}
+                  onChange={(e) => setUserPatch({ defaultRatePerHour: clampNum(e.target.value, 0) })}
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  style={{ ...input, padding: 10 }}
+                  placeholder="ex: 44"
+                />
+              </div>
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 14 }}>
@@ -1309,12 +1459,17 @@ export default function App() {
                 {(currentEntry.expenses || []).map((ex) => (
                   <div
                     key={ex.id}
-                    style={{ display: "grid", gridTemplateColumns: "220px 140px 1fr 80px", gap: 10, alignItems: "center" }}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "220px 140px 1fr 120px 80px",
+                      gap: 10,
+                      alignItems: "center",
+                    }}
                   >
                     <select
                       value={ex.type}
                       disabled={!activeEmail || isLocked}
-                      onChange={(e) => updateExpense(ex.id, { type: e.target.value as ExpenseType })}
+                      onChange={(e) => updateExpense(ex.id, { type: normalizeExpenseType(e.target.value) })}
                       style={input}
                     >
                       {EXP_TYPES.map((t) => (
@@ -1343,6 +1498,18 @@ export default function App() {
                       placeholder="note..."
                     />
 
+                    {/* ✅ Attach */}
+                    <label style={{ ...smallBtn, display: "inline-flex", justifyContent: "center", alignItems: "center" }}>
+                      Attach
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        style={{ display: "none" }}
+                        disabled={!activeEmail || isLocked}
+                        onChange={(e) => attachExpenseFile(ex.id, e.target.files?.[0] || null)}
+                      />
+                    </label>
+
                     <button
                       onClick={() => removeExpense(ex.id)}
                       style={{ ...smallBtn, borderColor: "#eee" }}
@@ -1350,6 +1517,12 @@ export default function App() {
                     >
                       ✕
                     </button>
+
+                    {ex.fileName ? (
+                      <div style={{ gridColumn: "1 / -1", fontSize: 12, opacity: 0.8 }}>
+                        📎 {ex.fileName} {ex.fileDataUrl ? "(saved)" : ""}
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -1416,18 +1589,18 @@ export default function App() {
           id="pdf-root"
           style={{
             width: 900,
-            padding: 30,
+            padding: 26,
             fontFamily: "Arial, Helvetica, sans-serif",
             color: "#111",
             background: "white",
           }}
         >
           <div style={pdfH1}>Timesheet</div>
+          <div style={pdfSub}>WindPro Timesheet MCE</div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 18 }}>
-            {/* Left box */}
+          <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16 }}>
             <div style={pdfBox}>
-              <div style={{ fontSize: 22, lineHeight: 1.8 }}>
+              <div style={{ fontSize: 16, lineHeight: 1.8 }}>
                 <div>
                   <span style={{ opacity: 0.75 }}>Period:</span> {selectedPeriod.label}
                 </div>
@@ -1440,23 +1613,17 @@ export default function App() {
                 <div>
                   <span style={{ opacity: 0.75 }}>Name:</span> {activeUser.name || "-"}
                 </div>
-                <div style={{ opacity: 0.75 }}>
-                  Rate varies per day (see table)
-                </div>
               </div>
             </div>
 
-            {/* Right box */}
             <div style={pdfBox}>
-              <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.8 }}>
+              <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.8 }}>
                 <div>Total hours: {(Number(totals.hours) || 0).toFixed(2)}</div>
                 <div>Total expenses: € {(Number(totals.expenses) || 0).toFixed(2)}</div>
                 <div>Total pay: € {(Number(totals.pay) || 0).toFixed(2)}</div>
               </div>
 
-              <div style={{ marginTop: 22, fontSize: 18, opacity: 0.85 }}>
-                Generated: {generatedStr}
-              </div>
+              <div style={{ marginTop: 14, fontSize: 12, opacity: 0.85 }}>Generated: {generatedStr}</div>
             </div>
           </div>
 
@@ -1507,10 +1674,10 @@ export default function App() {
             </tbody>
           </table>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, marginTop: 26, alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 18, alignItems: "start" }}>
             <div>
-              <div style={{ fontSize: 34, fontWeight: 900, marginBottom: 12 }}>Totals</div>
-              <div style={{ fontSize: 22, lineHeight: 1.8 }}>
+              <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 10 }}>Totals</div>
+              <div style={{ fontSize: 14, lineHeight: 1.8 }}>
                 <div>Hours: {(Number(totals.hours) || 0).toFixed(2)}</div>
                 <div>Expenses: € {(Number(totals.expenses) || 0).toFixed(2)}</div>
                 <div>Pay: € {(Number(totals.pay) || 0).toFixed(2)}</div>
@@ -1518,8 +1685,8 @@ export default function App() {
             </div>
 
             <div>
-              <div style={{ fontSize: 34, fontWeight: 900, marginBottom: 12 }}>Signature</div>
-              <div style={{ border: "1px solid #eee", borderRadius: 10, height: 190, overflow: "hidden" }}>
+              <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 10 }}>Signature</div>
+              <div style={{ border: "1px solid #eee", borderRadius: 10, height: 170, overflow: "hidden" }}>
                 {activePeriodSig ? (
                   <img src={activePeriodSig} alt="signature" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                 ) : null}
