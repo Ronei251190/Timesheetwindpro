@@ -817,13 +817,7 @@ export default function App() {
       pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
       remaining -= pageHeight;
     }
-
-    // 4) PDF -> base64 (fără prefix)
-    const dataUri = pdf.output("datauristring"); // "data:application/pdf;filename=...;base64,XXXX"
-    const pdfBase64 = dataUri.split(",")[1] || "";
-
     const to = "borot@windpro.pl"; // ✅ TEST FIX
-    const filename = `Timesheet_${selectedPeriod.id}_${activeEmail}.pdf`;
     const subject = `WindPro TimeSheet MCE - ${selectedPeriod.id} - ${activeUser.name}`;
     const html = `
       <div style="font-family:Arial,sans-serif">
