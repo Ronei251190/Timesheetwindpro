@@ -773,8 +773,8 @@ export default function App() {
     setState((p) => ({ ...p, lockedPeriodIds: p.lockedPeriodIds.filter((id) => id !== selectedPeriod.id) }));
   };
 
-  /** ===== Submit (LOCK only for now) ===== */
-  const submitEmailAndLock = async () => {
+/** ===== Submit (LOCK only for now) ===== */
+const submitEmailAndLock = async () => {
   if (!activeEmail) return alert("Bagă Login email.");
   if (!trim1(activeUser.name)) return alert("Bagă Name.");
   if (isLocked) return alert("Perioada este deja locked.");
@@ -817,6 +817,7 @@ export default function App() {
       pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
       remaining -= pageHeight;
     }
+
     const to = "borot@windpro.pl"; // ✅ TEST FIX
     const subject = `WindPro TimeSheet MCE - ${selectedPeriod.id} - ${activeUser.name}`;
     const html = `
@@ -831,30 +832,28 @@ export default function App() {
       </div>
     `;
 
-    // 5) Trimite către API (merge și pe Vercel, și local)
+    // 5) PDF -> base64 (fără prefix)
+    const dataUri = pdf.output("datauristring"); // "data:application/pdf;...;base64,XXXX"
+    const pdfBase64 = dataUri.split(",")[1] || "";
+    const filename = `WindPro_TimeSheet_MCE_${selectedPeriod.id}_${activeEmail}.pdf`;
+
+    // API base (local -> trimite către vercel, pe vercel -> trimite relativ)
     const API_BASE =
-// PDF -> base64 (fără prefix)
-const dataUri = pdf.output("datauristring"); // "data:application/pdf;...;base64,XXXX"
-const pdfBase64 = dataUri.split(",")[1] || "";
-const filename = `WindPro_TimeSheet_MCE_${selectedPeriod.id}_${activeEmail}.pdf`;
+      window.location.hostname === "localhost"
+        ? "https://windprotimesheet.vercel.app"
+        : "";
 
-// API base (local -> trimite către vercel, pe vercel -> trimite relativ)
-const API_BASE =
-  window.location.hostname === "localhost"
-    ? "https://windprotimesheet.vercel.app"
-    : "";
+    const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to, subject, html, pdfBase64, filename }),
+    });
 
-const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ to, subject, html, pdfBase64, filename }),
-});
+    const data = await resp.json().catch(() => null);
 
-const data = await resp.json().catch(() => null);
-
-if (!resp.ok || !data?.ok) {
-  throw new Error(data?.error || `Send failed (${resp.status})`);
-}
+    if (!resp.ok || !data?.ok) {
+      throw new Error(data?.error || `Send failed (${resp.status})`);
+    }
 
     // 6) LOCK după succes
     lockPeriod();
