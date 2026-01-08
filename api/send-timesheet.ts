@@ -18,12 +18,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { to, subject, html, pdfBase64, filename } = req.body;
+    const { to, subject, html, } = req.body;
 
-    if (!to || !subject || !html || !pdfBase64 || !filename) {
-      return res.status(400).json({ ok: false, error: "Missing fields" });
-    }
-
+    if (!to || !subject || !html) {
+  return res.status(400).json({ ok: false, error: "Missing fields" });
+}
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT || 465),
@@ -34,20 +33,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
     });
 
-    await transporter.sendMail({
-      from: process.env.MAIL_FROM || process.env.SMTP_USER,
-      to,
-      subject,
-      html,
-      attachments: [
-        {
-          filename,
-          content: Buffer.from(pdfBase64, "base64"),
-          contentType: "application/pdf",
-        },
-      ],
-    });
-
+ await transporter.sendMail({
+  from: process.env.MAIL_FROM || process.env.SMTP_USER,
+  to,
+  subject,
+  html,
+});
     return res.status(200).json({ ok: true });
   } catch (err: any) {
     return res.status(500).json({

@@ -845,7 +845,7 @@ export default function App() {
    const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to, subject, html, filename, pdfBase64 }),
+      body: JSON.stringify({ to, subject, html, }),
     });
 
     const data = await resp.json().catch(() => null);
