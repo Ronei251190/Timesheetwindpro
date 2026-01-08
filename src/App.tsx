@@ -838,11 +838,10 @@ const submitEmailAndLock = async () => {
     const filename = `WindPro_TimeSheet_MCE_${selectedPeriod.id}_${activeEmail}.pdf`;
 
     // API base (local -> trimite către vercel, pe vercel -> trimite relativ)
-    const API_BASE =
-      window.location.hostname === "localhost"
-        ? "https://windprotimesheet.vercel.app"
-        : "";
-
+const API_BASE =
+  window.location.hostname === "localhost"
+    ? "https://windprotimesheet.vercel.app"
+    : "";
     const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
