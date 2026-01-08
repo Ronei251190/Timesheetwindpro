@@ -833,20 +833,28 @@ export default function App() {
 
     // 5) Trimite către API (merge și pe Vercel, și local)
     const API_BASE =
+// PDF -> base64 (fără prefix)
+const dataUri = pdf.output("datauristring"); // "data:application/pdf;...;base64,XXXX"
+const pdfBase64 = dataUri.split(",")[1] || "";
+const filename = `WindPro_TimeSheet_MCE_${selectedPeriod.id}_${activeEmail}.pdf`;
+
+// API base (local -> trimite către vercel, pe vercel -> trimite relativ)
+const API_BASE =
   window.location.hostname === "localhost"
     ? "https://windprotimesheet.vercel.app"
     : "";
-   const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to, subject, html, }),
-    });
 
-    const data = await resp.json().catch(() => null);
+const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ to, subject, html, pdfBase64, filename }),
+});
 
-    if (!resp.ok || !data?.ok) {
-      throw new Error(data?.error || `Send failed (${resp.status})`);
-    }
+const data = await resp.json().catch(() => null);
+
+if (!resp.ok || !data?.ok) {
+  throw new Error(data?.error || `Send failed (${resp.status})`);
+}
 
     // 6) LOCK după succes
     lockPeriod();
