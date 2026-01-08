@@ -175,8 +175,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
 
   try {
-    const body = (req.body || {}) as any;
-
+ const body = (() => {
+  const b: any = req.body || {};
+  if (typeof b === "string") {
+    try {
+      return JSON.parse(b);
+    } catch {
+      return {};
+    }
+  }
+  return b;
+})();
     const to = String(body.to || "");
     const subject = String(body.subject || "");
     const html = String(body.html || "");

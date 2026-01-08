@@ -820,18 +820,6 @@ const submitEmailAndLock = async () => {
 
     const to = "borot@windpro.pl"; // ✅ TEST FIX
     const subject = `WindPro TimeSheet MCE - ${selectedPeriod.id} - ${activeUser.name}`;
-    const html = `
-      <div style="font-family:Arial,sans-serif">
-        <h2>WindPro TimeSheet MCE</h2>
-        <p><b>Name:</b> ${activeUser.name}</p>
-        <p><b>Login:</b> ${activeEmail}</p>
-        <p><b>Period:</b> ${selectedPeriod.label}</p>
-        <p><b>Total hours:</b> ${(Number(totals.hours) || 0).toFixed(2)}</p>
-        <p><b>Total pay:</b> € ${(Number(totals.pay) || 0).toFixed(2)}</p>
-        <p>PDF attached.</p>
-      </div>
-    `;
-
     // 5) PDF -> base64 (fără prefix)
     // API base (local -> trimite către vercel, pe vercel -> trimite relativ)
 const API_BASE =
@@ -841,31 +829,16 @@ const API_BASE =
     const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-   body: JSON.stringify({
+body: JSON.stringify({
   to,
   subject,
+  user: { name: activeUser.name, email: activeEmail },
+  period: { id: selectedPeriod.id, label: selectedPeriod.label },
+  totals: { hours: totals.hours, pay: totals.pay, expenses: totals.expenses },
 
-  user: {
-    name: activeUser.name,
-    email: activeEmail,
-  },
-
-  period: {
-    id: selectedPeriod.id,
-    label: selectedPeriod.label,
-    from: selectedPeriod.from,
-    to: selectedPeriod.to,
-  },
-
-  totals: {
-    hours: totals.hours,
-    pay: totals.pay,
-    expenses: totals.expenses,
-  },
-
-  days: Object.values(daysByDate),
+  // TODO: aici pui days corect după numele variabilelor tale
+  days: [], 
 }),
-
     });
 
     const data = await resp.json().catch(() => null);
