@@ -2,11 +2,22 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import nodemailer from "nodemailer";
 import { Resend } from "resend";
 
+/* 👇👇👇 AICI SE PUNE */
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: "25mb",
+    },
+  },
+};
+/* 👆👆👆 GATA */
+
+/* restul codului tău */
 type ReqBody = {
   to?: string;
   subject?: string;
   filename?: string;
-  pdfBase64?: string; // base64 fără prefix
+  pdfBase64?: string;
 };
 
 function sendJson(res: VercelResponse, status: number, data: any) {
@@ -14,6 +25,7 @@ function sendJson(res: VercelResponse, status: number, data: any) {
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(data));
 }
+
 
 async function sendViaSMTP(args: { to: string; subject: string; filename: string; pdfBase64: string }) {
   const host = process.env.SMTP_HOST;
