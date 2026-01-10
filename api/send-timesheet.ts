@@ -78,8 +78,13 @@ return sendJson(res, 200, {
   debug: resp,
 });
     return sendJson(res, 200, { ok: true, id: (resp as any)?.data?.id || null });
-  } catch (err: any) {
-    console.error(err);
-    return sendJson(res, 500, { ok: false, error: err?.message || "Server error" });
-  }
+catch (err: any) {
+  console.error("RESEND ERROR:", err);
+
+  return sendJson(res, 500, {
+    ok: false,
+    error: err?.message || "Server error",
+    details: err?.response || err,
+  });
 }
+

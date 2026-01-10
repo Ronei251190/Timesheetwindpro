@@ -845,7 +845,9 @@ export default function App() {
       setSubmitMenuOpen(false);
     } catch (err: any) {
       console.error(err);
-      setSubmitMsg(`❌ Submit failed: ${err?.message || "unknown error"}`);
+    setSubmitMsg(
+  `❌ Submit failed: ${err?.message || "unknown"}`
+);
     } finally {
       setSubmitBusy(false);
     }
