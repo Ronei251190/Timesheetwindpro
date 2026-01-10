@@ -36,7 +36,7 @@ export default async function handler(req: any, res: any) {
     return res.end();
   }
 
-  if (req.method !== "POST") return sendJson(res, 200, { ok: true, id: (resp as any)?.data?.id || null });
+ if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "Method not allowed" });
   try {
     const body: ReqBody = req.body || {};
     const to = String(body.to || "").trim();
@@ -69,20 +69,14 @@ export default async function handler(req: any, res: any) {
       </div>
     `;
 
-    const resp = await resend.emails.send({
-      from,
-      to,
-      subject,
-      html,
-      attachments: [
-        {
-          filename,
-          content: pdfBase64,          // base64 fără prefix
-          contentType: "application/pdf",
-        },
-      ],
-    });
+   const resp = await resend.emails.send({ ... });
 
+return sendJson(res, 200, {
+  ok: true,
+  id: (resp as any)?.data?.id || null,
+  // ✅ debug minimal (nu trimite cheia, doar info)
+  debug: resp,
+});
     return sendJson(res, 200, { ok: true, id: (resp as any)?.data?.id || null });
   } catch (err: any) {
     console.error(err);
