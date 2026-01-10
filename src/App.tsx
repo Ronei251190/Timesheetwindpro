@@ -459,42 +459,46 @@ export default function App() {
   };
 
   /** ===== PDF Export ===== */
-  const exportPdfPeriod = async () => {
-    if (!activeEmail) return alert("Bagă Login email.");
-    const root = document.getElementById("pdf-root");
-    if (!root) return alert("PDF template missing (#pdf-root).");
+const exportPdfPeriod = async () => {
+  if (!activeEmail) return alert("Bagă Login email.");
+  const root = document.getElementById("pdf-root");
+  if (!root) return alert("PDF template missing (#pdf-root).");
 
-    await new Promise((r) => setTimeout(r, 60));
+  await new Promise((r) => setTimeout(r, 60));
 
-    const canvas = await html2canvas(root, {
-      scale: 0.75, // ✅ reduce size
-      backgroundColor: "#ffffff",
-      useCORS: true,
-      logging: false,
-    });
+  const canvas = await html2canvas(root, {
+    scale: 0.85,
+    backgroundColor: "#ffffff",
+    useCORS: true,
+    logging: false,
+  });
 
-    const imgData = canvas.toDataURL("image/png");
-    x`x` = new jsPDF("p", "pt", "a4");
+  const imgData = canvas.toDataURL("image/png");
+  const pdf = new jsPDF("p", "pt", "a4");
 
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
 
-    const imgWidth = pageWidth;
-    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+  const imgWidth = pageWidth;
+  const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
-    let remaining = imgHeight;
-    let y = 0;
+  let remaining = imgHeight;
+  let y = 0;
 
+  pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
+  remaining -= pageHeight;
+
+  while (remaining > 0) {
+    pdf.addPage();
+    y = -(imgHeight - remaining);
     pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
     remaining -= pageHeight;
+  }
 
-    while (remaining > 0) {
-      pdf.addPage();
-      y = -(imgHeight - remaining);
-      pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
-      remaining -= pageHeight;
-    }
-const blob = pdf.output("blob");
+  const filename = `Timesheet_${selectedPeriod.id}_${activeUser.name || "user"}.pdf`;
+  pdf.save(filename);
+};
+
 
   /** ===== Submit: generate PDF + send email + lock ===== */
   const submitEmailAndLock = async () => {
@@ -1107,10 +1111,19 @@ const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
             <div>
               <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 10 }}>Signature</div>
               <div style={{ border: "1px solid #eee", borderRadius: 10, height: 170, overflow: "hidden" }}>
-               {activePeriodSig ? (
-  <img
-    src={activePeriodSig}
-    alt="signature"
-    style={{ width: "100%", height: "100%", objectFit: "contain" }}
-  />
-) : null}
+                {activePeriodSig ? (
+                  <img
+                    src={activePeriodSig}
+                    alt="signature"
+                    style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                  />
+                ) : null}
+              </div>
+            </div>
+          </div>
+          {/* END PDF TEMPLATE */}
+        </div>
+      </div>
+    </div>
+  );
+}
