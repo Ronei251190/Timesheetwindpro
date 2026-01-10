@@ -1,13 +1,14 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import nodemailer from "nodemailer";
-import formidable, { File as FormidableFile } from "formidable";
+import formidable from "formidable";
 import fs from "fs";
 
 export const config = {
-  api: {
-    bodyParser: false, // IMPORTANT pentru multipart/form-data
-  },
+  api: { bodyParser: false },
 };
+
+// (opțional, dar recomandat) forțează Node runtime în cazul în care ai config-uri ciudate
+export const runtime = "nodejs";
 
 function sendJson(res: VercelResponse, status: number, data: any) {
   res.status(status);
@@ -16,9 +17,14 @@ function sendJson(res: VercelResponse, status: number, data: any) {
 }
 
 function parseForm(req: VercelRequest) {
-  const form = formidable({ multiples: false });
+  const form = formidable({
+    multiples: false,
+    keepExtensions: true,
+    uploadDir: "/tmp", // IMPORTANT pe Vercel
+    // maxFileSize: 15 * 1024 * 1024, // opțional
+  });
 
-  return new Promise<{ fields: Record<string, any>; files: Record<string, FormidableFile> }>((resolve, reject) => {
+  return new Promise<{ fields: Record<string, any>; files: Record<string, any> }>((resolve, reject) => {
     form.parse(req as any, (err, fields, files) => {
       if (err) return reject(err);
       resolve({ fields: fields as any, files: files as any });
@@ -36,15 +42,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const subject = String(fields.subject || "").trim();
     const message = String(fields.message || "").trim();
 
-    const file = files.file;
     if (!to) return sendJson(res, 400, { ok: false, error: "Missing 'to'." });
     if (!subject) return sendJson(res, 400, { ok: false, error: "Missing 'subject'." });
-    if (!file) return sendJson(res, 400, { ok: false, error: "Missing file." });
 
-    const filepath = (file as any).filepath || (file as any).path; // compat
-    const originalFilename = (file as any).originalFilename || (file as any).name || "timesheet.pdf";
+    // ✅ normalizează fișierul: poate fi File sau File[]
+    const fileAny = (files as any).file;
+    const uploaded = Array.isArray(fileAny) ? fileAny[0] : fileAny;
 
-    if (!filepath) return sendJson(res, 400, { ok: false, error: "File path missing (upload failed)." });
+    if (!uploaded) return sendJson(res, 400, { ok: false, error: "Missing file." });
+
+    const filepath = uploaded?.filepath || uploaded?.path; // v2/v3 compat
+    const originalFilename = uploaded?.originalFilename || uploaded?.name || "timesheet.pdf";
+
+    if (!filepath) {
+      return sendJson(res, 400, {
+        ok: false,
+        error: "File path missing (upload failed).",
+        debug: {
+          fileKeys: Object.keys(files || {}),
+          fileType: typeof fileAny,
+          isArray: Array.isArray(fileAny),
+          uploadedKeys: uploaded ? Object.keys(uploaded) : [],
+        },
+      });
+    }
 
     const pdfBuffer = fs.readFileSync(filepath);
 
