@@ -549,7 +549,11 @@ const submitEmailAndLock = async () => {
 
     // ✅ Email
     const to = "borot@windpro.pl";
-    const subject = `WindPro TimeSheet MCE - ${selectedPeriod.id} - ${activeUser.name}`;
+   const subject = `WindPro Timesheet MCE ${format(
+  parseISO(selectedPeriod.startISO),
+  "dd/MM/yyyy"
+)}-${format(parseISO(selectedPeriod.endISO), "dd/MM/yyyy")}`;
+
   const message = `
 Hello,
 
