@@ -547,7 +547,14 @@ export default function App() {
 
       const to = "borot@windpro.pl"; // schimbă aici dacă vrei
       const subject = `WindPro TimeSheet MCE - ${selectedPeriod.id} - ${activeUser.name}`;
-      const message = "Please find attached the Timesheet for the aferent month.";
+     const message = `
+Hello,
+
+Please find attached the timesheet for the selected period.
+
+Kind regards,  
+${activeUser.name}
+`;
 
       const filename = `Timesheet_${selectedPeriod.id}_${activeUser.name}.pdf`;
 
