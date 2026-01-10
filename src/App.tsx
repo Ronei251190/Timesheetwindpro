@@ -1107,13 +1107,10 @@ const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
             <div>
               <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 10 }}>Signature</div>
               <div style={{ border: "1px solid #eee", borderRadius: 10, height: 170, overflow: "hidden" }}>
-                {activePeriodSig ? <img src={activePeriodSig} alt="signature" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : null}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      {/* END PDF TEMPLATE */}
-    </div>
-  );
-}
+               {activePeriodSig ? (
+  <img
+    src={activePeriodSig}
+    alt="signature"
+    style={{ width: "100%", height: "100%", objectFit: "contain" }}
+  />
+) : null}
