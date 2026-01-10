@@ -550,13 +550,14 @@ const submitEmailAndLock = async () => {
     // ✅ Email
     const to = "borot@windpro.pl";
     const subject = `WindPro TimeSheet MCE - ${selectedPeriod.id} - ${activeUser.name}`;
-    const message = `Hello,
+  const message = `
+Hello,
 
 Please find attached the timesheet for the selected period.
 
-Kind regards,
-${activeUser.name}
+Kind regards,  
 `;
+
 
     const filename = `Timesheet_${selectedPeriod.id}_${activeUser.name}.pdf`;
 
