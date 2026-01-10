@@ -48,39 +48,27 @@ type Expense = {
   type: ExpenseType;
   amount: number;
   note: string;
-
-  /** ✅ attachments (receipt/invoice) */
   fileName?: string;
-  fileDataUrl?: string; // image/* or pdf as dataURL
+  fileDataUrl?: string;
 };
 
 type DayEntry = {
   dateISO: string;
-
   workType: WorkType;
   hours: number;
-
-  /** ✅ IMPORTANT: rate saved PER DAY (fixes travel/day vs night/day issue) */
-  ratePerHour: number;
-
+  ratePerHour: number; // per day (fixes travel vs night rate issue)
   location: string;
   serviceWorker: string;
-
   platformType: PlatformType;
   vesselPreset: string;
   vesselManual: string;
-
   workNote: string;
-
   expenses: Expense[];
 };
 
 type StoredUser = {
   name: string;
-
-  /** optional convenience default (used to prefill new days) */
   defaultRatePerHour: number;
-
   entries: Record<string, DayEntry>;
   signatureByPeriod: Record<string, string | null>; // key YYYY-MM
 };
@@ -89,12 +77,9 @@ type AppState = {
   loginEmail: string;
   selectedPeriodId: string; // YYYY-MM
   selectedDateISO: string; // YYYY-MM-DD
-
   lockedPeriodIds: string[];
-
   multiMode: boolean;
   multiSelectedISOs: string[];
-
   users: Record<string, StoredUser>;
 };
 
@@ -108,7 +93,7 @@ type Period = {
 
 /** ===================== CONSTS ===================== */
 
-const LS_KEY = "windpro_timesheet_v9_day_rate_pdf_mce";
+const LS_KEY = "windpro_timesheet_v10_pdf_email_ok";
 const ADMIN_PASSWORD = "1234"; // schimbă aici
 
 const WORK_TYPES: WorkType[] = [
@@ -187,7 +172,6 @@ function inRangeISO(dateISO: string, startISO: string, endISO: string) {
   return dateISO >= startISO && dateISO <= endISO;
 }
 
-/** ✅ ExpenseType guard + normalize (fix TS + fix old storage) */
 const isExpenseType = (v: string): v is ExpenseType =>
   (EXP_TYPES as readonly string[]).includes(v);
 
@@ -196,7 +180,6 @@ const normalizeExpenseType = (v: any): ExpenseType => {
   return isExpenseType(s) ? s : "Other";
 };
 
-/** ✅ migrate old state (fix for old expenses type:string) */
 function migrateState(s: AppState): AppState {
   const next: AppState = {
     ...s,
@@ -225,7 +208,6 @@ function migrateState(s: AppState): AppState {
       }));
     }
   }
-
   return next;
 }
 
@@ -350,7 +332,6 @@ const btnDark: React.CSSProperties = {
 };
 
 /** ===================== STYLES (PDF) ===================== */
-/** ✅ Made fonts smaller + added "WindPro Timesheet MCE" */
 
 const pdfBox: React.CSSProperties = {
   border: "1px solid #eee",
@@ -358,26 +339,22 @@ const pdfBox: React.CSSProperties = {
   padding: 16,
   background: "white",
 };
-
 const pdfH1: React.CSSProperties = {
   fontSize: 34,
   fontWeight: 900,
   margin: "0 0 6px 0",
 };
-
 const pdfSub: React.CSSProperties = {
   fontSize: 14,
   fontWeight: 700,
   opacity: 0.8,
   margin: "0 0 14px 0",
 };
-
 const pdfTitle: React.CSSProperties = {
   fontSize: 22,
   fontWeight: 900,
   margin: "18px 0 10px",
 };
-
 const pdfTh: React.CSSProperties = {
   border: "1px solid #e5e5e5",
   padding: "8px 8px",
@@ -386,7 +363,6 @@ const pdfTh: React.CSSProperties = {
   background: "#f5f6f8",
   fontSize: 12,
 };
-
 const pdfTd: React.CSSProperties = {
   border: "1px solid #e5e5e5",
   padding: "8px 8px",
@@ -502,7 +478,6 @@ export default function App() {
     });
   }, [activeEmail]);
 
-  // keep selectedDate inside period
   useEffect(() => {
     if (!inRangeISO(state.selectedDateISO, selectedPeriod.startISO, selectedPeriod.endISO)) {
       setState((p) => ({ ...p, selectedDateISO: selectedPeriod.startISO, multiSelectedISOs: [] }));
@@ -511,7 +486,6 @@ export default function App() {
 
   const entries = activeUser.entries || {};
 
-  /** ✅ currentEntry contains ratePerHour per day */
   const currentEntry: DayEntry = useMemo(() => {
     const e = entries[state.selectedDateISO];
     if (e) return e;
@@ -533,7 +507,8 @@ export default function App() {
     if (!activeEmail || isLocked) return;
     setState((prev) => {
       const u = prev.users[activeEmail] || makeDefaultUser();
-      const existing = u.entries[prev.selectedDateISO] || makeDefaultEntry(prev.selectedDateISO, u.defaultRatePerHour);
+      const existing =
+        u.entries[prev.selectedDateISO] || makeDefaultEntry(prev.selectedDateISO, u.defaultRatePerHour);
 
       const nextExpenses: Expense[] = Array.isArray((patch as any).expenses)
         ? ((patch as any).expenses as Expense[]).map((x: any) => ({
@@ -555,7 +530,10 @@ export default function App() {
 
       return {
         ...prev,
-        users: { ...prev.users, [activeEmail]: { ...u, entries: { ...u.entries, [prev.selectedDateISO]: nextEntry } } },
+        users: {
+          ...prev.users,
+          [activeEmail]: { ...u, entries: { ...u.entries, [prev.selectedDateISO]: nextEntry } },
+        },
       };
     });
   };
@@ -570,7 +548,7 @@ export default function App() {
     });
   };
 
-  /** ===== Calendar month ===== */
+  /** Calendar */
   const monthStart = useMemo(() => startOfMonth(parseISO(selectedPeriod.startISO)), [selectedPeriod.startISO]);
   const monthLabel = useMemo(() => format(monthStart, "MMMM yyyy"), [monthStart]);
   const savedDatesInMonth = useMemo(() => {
@@ -578,7 +556,7 @@ export default function App() {
     return new Set(Object.keys(entries).filter((d) => d.startsWith(monthStr)));
   }, [entries, monthStart]);
 
-  /** ===== Period entries + totals ===== */
+  /** Period entries + totals */
   const periodEntries = useMemo(() => {
     const out: DayEntry[] = [];
     for (const [dateISO, entry] of Object.entries(entries)) {
@@ -588,29 +566,18 @@ export default function App() {
     return out;
   }, [entries, selectedPeriod.startISO, selectedPeriod.endISO]);
 
-  /** ✅ totals pay = sum(hours * dayRate) */
   const totals = useMemo(() => {
     const hours = periodEntries.reduce((acc, e) => acc + clampNum(e.hours, 0), 0);
     const expenses = periodEntries.reduce((acc, e) => {
       const s = (e.expenses || []).reduce((a, x) => a + clampNum(x.amount, 0), 0);
       return acc + s;
     }, 0);
-    const pay = periodEntries.reduce(
-      (acc, e) => acc + clampNum(e.hours, 0) * clampNum(e.ratePerHour, 0),
-      0
-    );
-
+    const pay = periodEntries.reduce((acc, e) => acc + clampNum(e.hours, 0) * clampNum(e.ratePerHour, 0), 0);
     const defaultRate = clampNum(activeUser.defaultRatePerHour, 0);
-
-    return {
-      hours: round2(hours),
-      expenses: round2(expenses),
-      pay: round2(pay),
-      defaultRate: round2(defaultRate),
-    };
+    return { hours: round2(hours), expenses: round2(expenses), pay: round2(pay), defaultRate: round2(defaultRate) };
   }, [periodEntries, activeUser.defaultRatePerHour]);
 
-  /** ===== Multi-select ===== */
+  /** Multi-select */
   const multiSet = useMemo(() => new Set(state.multiSelectedISOs), [state.multiSelectedISOs]);
   const toggleMultiISO = (iso: string) => {
     setState((p) => {
@@ -627,7 +594,7 @@ export default function App() {
     else setState((p) => ({ ...p, selectedDateISO: iso }));
   };
 
-  /** ===== Expenses ===== */
+  /** Expenses */
   const addExpense = () => {
     if (!activeEmail || isLocked) return;
     const next: Expense[] = [
@@ -637,23 +604,18 @@ export default function App() {
     setEntry({ expenses: next });
   };
 
-  /** ✅ FIX: keeps ExpenseType strict + normalizes */
   const updateExpense = (id: string, patch: Partial<Expense>) => {
     if (!activeEmail || isLocked) return;
-
     const next: Expense[] = (currentEntry.expenses || []).map((e) => {
       if (e.id !== id) return e;
-
-      const merged: Expense = {
+      return {
         ...e,
         ...patch,
         type: normalizeExpenseType((patch as any).type ?? e.type),
         amount: patch.amount !== undefined ? clampNum(patch.amount, 0) : e.amount,
         note: patch.note !== undefined ? String(patch.note) : e.note,
       };
-      return merged;
     });
-
     setEntry({ expenses: next });
   };
 
@@ -663,11 +625,9 @@ export default function App() {
     setEntry({ expenses: next });
   };
 
-  /** ✅ attach file for an expense */
   const attachExpenseFile = (expenseId: string, file: File | null) => {
     if (!file) return;
     if (!activeEmail || isLocked) return;
-
     const reader = new FileReader();
     reader.onload = () => {
       updateExpense(expenseId, {
@@ -678,15 +638,16 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  const dayExpenseSum = useMemo(() => {
-    return round2((currentEntry.expenses || []).reduce((a, x) => a + clampNum(x.amount, 0), 0));
-  }, [currentEntry.expenses]);
+  const dayExpenseSum = useMemo(
+    () => round2((currentEntry.expenses || []).reduce((a, x) => a + clampNum(x.amount, 0), 0)),
+    [currentEntry.expenses]
+  );
+  const dayPay = useMemo(
+    () => round2(clampNum(currentEntry.hours, 0) * clampNum(currentEntry.ratePerHour, 0)),
+    [currentEntry.hours, currentEntry.ratePerHour]
+  );
 
-  const dayPay = useMemo(() => {
-    return round2(clampNum(currentEntry.hours, 0) * clampNum(currentEntry.ratePerHour, 0));
-  }, [currentEntry.hours, currentEntry.ratePerHour]);
-
-  /** ===== Signature per period ===== */
+  /** Signature per period */
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawing = useRef(false);
 
@@ -758,7 +719,7 @@ export default function App() {
     setUserPatch({ signatureByPeriod: nextMap });
   };
 
-  /** ===== Lock / Unlock ===== */
+  /** Lock / Unlock */
   const lockPeriod = () => {
     setState((p) =>
       p.lockedPeriodIds.includes(selectedPeriod.id)
@@ -773,92 +734,125 @@ export default function App() {
     setState((p) => ({ ...p, lockedPeriodIds: p.lockedPeriodIds.filter((id) => id !== selectedPeriod.id) }));
   };
 
-/** ===== Submit (LOCK only for now) ===== */
-const submitEmailAndLock = async () => {
-  if (!activeEmail) return alert("Bagă Login email.");
-  if (!trim1(activeUser.name)) return alert("Bagă Name.");
-  if (isLocked) return alert("Perioada este deja locked.");
+  /** ===== SUBMIT (send email + attach PDF + lock) ===== */
+  const submitEmailAndLock = async () => {
+    if (!activeEmail) return alert("Bagă Login email.");
+    if (!trim1(activeUser.name)) return alert("Bagă Name.");
+    if (isLocked) return alert("Perioada este deja locked.");
 
-  setSubmitBusy(true);
-  setSubmitMsg("");
+    setSubmitBusy(true);
+    setSubmitMsg("");
 
-  try {
-    // 1) găsește template-ul PDF din pagină
-    const root = document.getElementById("pdf-root");
-    if (!root) throw new Error("PDF template missing (#pdf-root).");
+    try {
+      const root = document.getElementById("pdf-root");
+      if (!root) throw new Error("PDF template missing (#pdf-root).");
 
-    // 2) randare canvas din template
-    await new Promise((r) => setTimeout(r, 50));
-    const canvas = await html2canvas(root, {
-      scale: 2,
-      backgroundColor: "#ffffff",
-      useCORS: true,
-      logging: false,
-    });
+      await new Promise((r) => setTimeout(r, 50));
+      const canvas = await html2canvas(root, {
+        scale: 2,
+        backgroundColor: "#ffffff",
+        useCORS: true,
+        logging: false,
+      });
 
-    // 3) canvas -> PDF
-    const pdf = new jsPDF("p", "pt", "a4");
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
+      // canvas -> PDF
+      const pdf = new jsPDF("p", "pt", "a4");
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
 
-    const imgData = canvas.toDataURL("image/png");
-    const imgWidth = pageWidth;
-    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      const imgData = canvas.toDataURL("image/png");
+      const imgWidth = pageWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
-    let remaining = imgHeight;
-    let y = 0;
+      let remaining = imgHeight;
+      let y = 0;
 
-    pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
-    remaining -= pageHeight;
-
-    while (remaining > 0) {
-      pdf.addPage();
-      y = -(imgHeight - remaining);
       pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
       remaining -= pageHeight;
+
+      while (remaining > 0) {
+        pdf.addPage();
+        y = -(imgHeight - remaining);
+        pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
+        remaining -= pageHeight;
+      }
+
+      // PDF -> base64
+      const pdfBlob = pdf.output("blob");
+      const pdfBase64: string = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => {
+          const res = String(fr.result || "");
+          resolve(res.includes(",") ? res.split(",")[1] : res);
+        };
+        fr.onerror = () => reject(new Error("Failed to read PDF blob."));
+        fr.readAsDataURL(pdfBlob);
+      });
+
+      const to = "borot@windpro.pl";
+      const subject = "Please find attached the Timesheet for aferent month";
+      const filename = `WindPro_TimeSheet_MCE_${selectedPeriod.id}_${activeUser.name || activeEmail}.pdf`;
+
+      // days (real)
+      const daysToSend = periodEntries.map((e) => ({
+        dateISO: e.dateISO,
+        workType: e.workType,
+        hours: Number(e.hours) || 0,
+        ratePerHour: Number(e.ratePerHour) || 0,
+        location: e.location || "",
+        serviceWorker: e.serviceWorker || "",
+        platformType: e.platformType || "N/A",
+        vessel: (e.vesselManual || e.vesselPreset || "").trim(),
+        workNote: e.workNote || "",
+        expenses: (e.expenses || []).map((x) => ({
+          type: x.type,
+          amount: Number(x.amount) || 0,
+          note: x.note || "",
+          fileName: x.fileName,
+          fileDataUrl: x.fileDataUrl,
+        })),
+      }));
+
+      const API_BASE =
+        window.location.hostname === "localhost"
+          ? "https://windprotimesheet.vercel.app"
+          : "";
+
+      console.log("SUBMIT days:", daysToSend.length, "pdfBase64:", pdfBase64.length);
+
+      const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to,
+          subject,
+          message: subject,
+          filename,
+          pdfBase64,
+          user: { name: activeUser.name, email: activeEmail },
+          period: { id: selectedPeriod.id, label: selectedPeriod.label },
+          totals: { hours: totals.hours, pay: totals.pay, expenses: totals.expenses },
+          days: daysToSend,
+        }),
+      });
+
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data?.ok) {
+        throw new Error(data?.error || `Send failed (${resp.status})`);
+      }
+
+      lockPeriod();
+      setSubmitMsg("✅ Submitted + emailed + locked.");
+      setSubmitMenuOpen(false);
+    } catch (err: any) {
+      console.error(err);
+      setSubmitMsg(`❌ Submit failed: ${err?.message || "unknown error"}`);
+    } finally {
+      setSubmitBusy(false);
     }
+  };
 
-    const to = "borot@windpro.pl"; // ✅ TEST FIX
-    const subject = `WindPro TimeSheet MCE - ${selectedPeriod.id} - ${activeUser.name}`;
-    // 5) PDF -> base64 (fără prefix)
-    // API base (local -> trimite către vercel, pe vercel -> trimite relativ)
-const API_BASE =
-  window.location.hostname === "localhost"
-    ? "https://windprotimesheet.vercel.app"
-    : "";
-    const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-body: JSON.stringify({
-  to,
-  subject,
-  user: { name: activeUser.name, email: activeEmail },
-  period: { id: selectedPeriod.id, label: selectedPeriod.label },
-  totals: { hours: totals.hours, pay: totals.pay, expenses: totals.expenses },
-
-  // TODO: aici pui days corect după numele variabilelor tale
-  days: [], 
-}),
-    });
-
-    const data = await resp.json().catch(() => null);
-
-    if (!resp.ok || !data?.ok) {
-      throw new Error(data?.error || `Send failed (${resp.status})`);
-    }
-
-    // 6) LOCK după succes
-    lockPeriod();
-    setSubmitMsg("✅ Submitted + emailed to borot@windpro.pl + locked.");
-    setSubmitMenuOpen(false);
-  } catch (err: any) {
-    console.error(err);
-    setSubmitMsg(`❌ Submit failed: ${err?.message || "unknown error"}`);
-  } finally {
-    setSubmitBusy(false);
-  }
-};
-  /** ===== Copy my day ===== */
+  /** Copy my day */
   const applyCopyMyDay = () => {
     if (!activeEmail) return alert("Bagă Login email.");
     if (isLocked) return alert("Perioada e locked.");
@@ -883,7 +877,7 @@ body: JSON.stringify({
     setCopyMyDayOpen(false);
   };
 
-  /** ===== Copy colleague (code) ===== */
+  /** Copy colleague */
   const generateMyDayCode = () => {
     const e = entries[state.selectedDateISO];
     if (!e) return alert("Nu ai nimic salvat pe ziua selectată.");
@@ -909,7 +903,6 @@ body: JSON.stringify({
     }
     if (!parsed || parsed.v !== 1 || parsed.type !== "dayEntry" || !parsed.entry) return alert("Cod invalid.");
 
-    // ✅ normalize entry (important for old data)
     const entry: DayEntry = parsed.entry;
     entry.expenses = (entry.expenses || []).map((x: any) => ({
       id: String(x?.id || uid("exp")),
@@ -933,14 +926,13 @@ body: JSON.stringify({
     setCopyColleagueOpen(false);
   };
 
-  /** ===== PDF Export ===== */
+  /** Export PDF only */
   const exportPdfPeriod = async () => {
     if (!activeEmail) return alert("Bagă Login email.");
     const root = document.getElementById("pdf-root");
     if (!root) return alert("PDF template missing (#pdf-root).");
 
     await new Promise((r) => setTimeout(r, 50));
-
     const canvas = await html2canvas(root, {
       scale: 2,
       backgroundColor: "#ffffff",
@@ -950,10 +942,8 @@ body: JSON.stringify({
 
     const imgData = canvas.toDataURL("image/png");
     const pdf = new jsPDF("p", "pt", "a4");
-
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
-
     const imgWidth = pageWidth;
     const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
@@ -1044,7 +1034,6 @@ body: JSON.stringify({
             Export PDF (Period)
           </button>
 
-          {/* SUBMIT DROPDOWN */}
           <div style={{ position: "relative" }}>
             <button onClick={() => setSubmitMenuOpen((v) => !v)} style={btnGreen} disabled={!activeEmail || submitBusy}>
               Submit ▾
@@ -1070,7 +1059,7 @@ body: JSON.stringify({
                   disabled={!activeEmail || isLocked || submitBusy}
                   onClick={submitEmailAndLock}
                 >
-                  Submit (lock period)
+                  Submit (send email + lock period)
                 </button>
 
                 <button
@@ -1332,7 +1321,6 @@ body: JSON.stringify({
               Day pay: <b>€ {dayPay.toFixed(2)}</b> | Day expenses: <b>€ {dayExpenseSum.toFixed(2)}</b>
             </div>
 
-            {/* Optional default rate */}
             <div style={{ marginTop: 10, padding: 12, borderRadius: 12, border: "1px solid #eee", background: "#fafafa" }}>
               <div style={{ fontWeight: 800, marginBottom: 6 }}>Default rate (optional)</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: 12, alignItems: "end" }}>
@@ -1374,7 +1362,6 @@ body: JSON.stringify({
               </label>
             </div>
 
-            {/* Vessel / Platform */}
             <div style={{ marginTop: 14, padding: 14, borderRadius: 14, border: "1px solid #eee" }}>
               <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 10 }}>Vessel / Platform</div>
 
@@ -1427,7 +1414,6 @@ body: JSON.stringify({
               </label>
             </div>
 
-            {/* Work note */}
             <label style={{ display: "block", marginTop: 14 }}>
               <div style={lbl}>Work note</div>
               <input
@@ -1439,7 +1425,6 @@ body: JSON.stringify({
               />
             </label>
 
-            {/* Expenses */}
             <div style={{ marginTop: 18 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ fontSize: 18, fontWeight: 800 }}>Expenses</div>
@@ -1491,7 +1476,6 @@ body: JSON.stringify({
                       placeholder="note..."
                     />
 
-                    {/* ✅ Attach */}
                     <label style={{ ...smallBtn, display: "inline-flex", justifyContent: "center", alignItems: "center" }}>
                       Attach
                       <input
@@ -1688,7 +1672,7 @@ body: JSON.stringify({
           </div>
         </div>
       </div>
-      {/* ===================== END PDF TEMPLATE ===================== */}
+      {/* ===================== END PDF TEMPLATE (HIDDEN) ===================== */}
     </div>
   );
 }
