@@ -116,6 +116,13 @@ const clampNum = (n: any, fallback = 0) => {
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const todayISO = () => format(new Date(), "yyyy-MM-dd");
 const inRangeISO = (dateISO: string, startISO: string, endISO: string) => dateISO >= startISO && dateISO <= endISO;
+const chunk = <T,>(arr: T[], size: number) => {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
+  }
+  return out;
+};
 
 function safeParse<T>(raw: string | null, fallback: T): T {
   try {
@@ -324,6 +331,12 @@ export default function App() {
     out.sort((a, b) => (a.dateISO < b.dateISO ? -1 : 1));
     return out;
   }, [entries, selectedPeriod.startISO, selectedPeriod.endISO]);
+const ROWS_PER_PAGE = 17;
+
+const periodEntryPages = useMemo(
+  () => chunk(periodEntries, ROWS_PER_PAGE),
+  [periodEntries]
+);
 
   const totals = useMemo(() => {
     const hours = periodEntries.reduce((acc, e) => acc + clampNum(e.hours, 0), 0);
@@ -461,141 +474,130 @@ export default function App() {
   /** ===== PDF Export ===== */
 const exportPdfPeriod = async () => {
   if (!activeEmail) return alert("Bagă Login email.");
-  const root = document.getElementById("pdf-root");
-  if (!root) return alert("PDF template missing (#pdf-root).");
 
-  await new Promise((r) => setTimeout(r, 60));
-
-  const canvas = await html2canvas(root, {
-    scale: 0.85,
-    backgroundColor: "#ffffff",
-    useCORS: true,
-    logging: false,
-  });
-
-  const imgData = canvas.toDataURL("image/png");
   const pdf = new jsPDF("p", "pt", "a4");
 
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
+  for (let i = 0; i < periodEntryPages.length; i++) {
+    const root = document.getElementById(`pdf-root-${i}`);
+    if (!root) throw new Error(`PDF template missing (#pdf-root-${i}).`);
 
-  const imgWidth = pageWidth;
-  const imgHeight = (canvas.height * imgWidth) / canvas.width;
+    await new Promise((r) => setTimeout(r, 40));
 
-  let remaining = imgHeight;
-  let y = 0;
+    const canvas = await html2canvas(root, {
+      scale: 1,
+      backgroundColor: "#ffffff",
+      useCORS: true,
+      logging: false,
+    });
 
-  pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
-  remaining -= pageHeight;
+    // ✅ JPEG (mai mic ca PNG -> ajută la 413)
+    const imgData = canvas.toDataURL("image/jpeg", 0.78);
 
-  while (remaining > 0) {
-    pdf.addPage();
-    y = -(imgHeight - remaining);
-    pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
-    remaining -= pageHeight;
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+
+    const imgWidth = pageWidth;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+    if (i > 0) pdf.addPage();
+    pdf.addImage(imgData, "JPEG", 0, 0, imgWidth, Math.min(imgHeight, pageHeight), undefined, "FAST");
   }
 
-  const filename = `Timesheet_${selectedPeriod.id}_${activeUser.name || "user"}.pdf`;
-  pdf.save(filename);
+  pdf.save(`Timesheet_${selectedPeriod.id}_${activeUser.name || "User"}.pdf`);
 };
 
 
+
   /** ===== Submit: generate PDF + send email + lock ===== */
-  const submitEmailAndLock = async () => {
-    if (!activeEmail) return alert("Bagă Login email.");
-    if (!trim1(activeUser.name)) return alert("Bagă Name.");
-    if (isLocked) return alert("Perioada este deja locked.");
+const submitEmailAndLock = async () => {
+  if (!activeEmail) return alert("Bagă Login email.");
+  if (!trim1(activeUser.name)) return alert("Bagă Name.");
+  if (isLocked) return alert("Perioada este deja locked.");
 
-    setSubmitBusy(true);
-    setSubmitMsg("");
+  setSubmitBusy(true);
+  setSubmitMsg("");
 
-    try {
-      const root = document.getElementById("pdf-root");
-      if (!root) throw new Error("PDF template missing (#pdf-root).");
+  try {
+    // ✅ PDF pe mai multe pagini (corect, nu tăiat dintr-o imagine lungă)
+    const pdf = new jsPDF("p", "pt", "a4");
 
-      await new Promise((r) => setTimeout(r, 60));
+    for (let i = 0; i < periodEntryPages.length; i++) {
+      const root = document.getElementById(`pdf-root-${i}`);
+      if (!root) throw new Error(`PDF template missing (#pdf-root-${i}).`);
+
+      await new Promise((r) => setTimeout(r, 40));
 
       const canvas = await html2canvas(root, {
-        scale: 1.2, // ✅ reduce size (avoid 413)
+        scale: 1,
         backgroundColor: "#ffffff",
         useCORS: true,
         logging: false,
       });
 
-      const pdf = new jsPDF("p", "pt", "a4");
+      const imgData = canvas.toDataURL("image/jpeg", 0.78);
+
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-
-      const imgData = canvas.toDataURL("image/png");
       const imgWidth = pageWidth;
       const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
-      let remaining = imgHeight;
-      let y = 0;
+      if (i > 0) pdf.addPage();
+      pdf.addImage(imgData, "JPEG", 0, 0, imgWidth, Math.min(imgHeight, pageHeight), undefined, "FAST");
+    }
 
-      pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
-      remaining -= pageHeight;
+    const blob = pdf.output("blob");
 
-      while (remaining > 0) {
-        pdf.addPage();
-        y = -(imgHeight - remaining);
-        pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
-        remaining -= pageHeight;
-      }
-
-      // ✅ base64 fără prefix
-
-
-      const to = "borot@windpro.pl"; // schimbă aici dacă vrei
-      const subject = `WindPro TimeSheet MCE - ${selectedPeriod.id} - ${activeUser.name}`;
-     const message = `
-Hello,
+    // ✅ Email
+    const to = "borot@windpro.pl";
+    const subject = `WindPro TimeSheet MCE - ${selectedPeriod.id} - ${activeUser.name}`;
+    const message = `Hello,
 
 Please find attached the timesheet for the selected period.
 
-Kind regards,  
+Kind regards,
 ${activeUser.name}
 `;
 
-      const filename = `Timesheet_${selectedPeriod.id}_${activeUser.name}.pdf`;
+    const filename = `Timesheet_${selectedPeriod.id}_${activeUser.name}.pdf`;
 
-      const API_BASE = window.location.hostname === "localhost" ? "https://windprotimesheet.vercel.app" : "";
-const blob = pdf.output("blob");
+    // IMPORTANT: pe localhost -> trimite către site-ul vercel
+    const API_BASE = window.location.hostname === "localhost" ? "https://windprotimesheet.vercel.app" : "";
 
-const form = new FormData();
-form.append("to", to);
-form.append("subject", subject);
-form.append("message", message);
-form.append("file", blob, filename);
+    const form = new FormData();
+    form.append("to", to);
+    form.append("subject", subject);
+    form.append("message", message);
+    form.append("file", blob, filename);
 
-const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
-  method: "POST",
-  body: form, // IMPORTANT: fara headers
-});
+    const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
+      method: "POST",
+      body: form,
+    });
 
-      const rawText = await resp.text();
-      let data: any = null;
-      try {
-        data = JSON.parse(rawText);
-      } catch {
-        data = { raw: rawText };
-      }
-
-      if (!resp.ok || !data?.ok) {
-        const details = data?.details ? JSON.stringify(data.details).slice(0, 1200) : "";
-        throw new Error(`${data?.error || "Send failed"} (${resp.status}) ${details}`);
-      }
-
-      lockPeriod();
-      setSubmitMsg(`✅ Submitted + emailed + locked. Resend id: ${data?.id || "n/a"}`);
-      setSubmitMenuOpen(false);
-    } catch (err: any) {
-      console.error(err);
-      setSubmitMsg(`❌ Submit failed: ${err?.message || "unknown error"}`);
-    } finally {
-      setSubmitBusy(false);
+    const rawText = await resp.text();
+    let data: any = null;
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      data = { raw: rawText };
     }
-  };
+
+    if (!resp.ok || !data?.ok) {
+      const details = data?.details ? JSON.stringify(data.details).slice(0, 1200) : "";
+      throw new Error(`${data?.error || "Send failed"} (${resp.status}) ${details}`);
+    }
+
+    lockPeriod();
+    setSubmitMsg(`✅ Submitted + emailed + locked. Id: ${data?.id || "n/a"}`);
+    setSubmitMenuOpen(false);
+  } catch (err: any) {
+    console.error(err);
+    setSubmitMsg(`❌ Submit failed: ${err?.message || "unknown error"}`);
+  } finally {
+    setSubmitBusy(false);
+  }
+};
+
 
   /** ===== Copy my day ===== */
   const applyCopyMyDay = () => {
@@ -1030,100 +1032,108 @@ const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
 
       {/* PDF TEMPLATE (HIDDEN) */}
       <div style={{ position: "absolute", left: -99999, top: 0, width: 900 }}>
-        <div id="pdf-root" style={{ width: 900, padding: 26, fontFamily: "Arial, Helvetica, sans-serif", color: "#111", background: "white" }}>
-          <div style={pdfH1}>Timesheet</div>
-          <div style={pdfSub}>WindPro Timesheet MCE</div>
+  {periodEntryPages.map((pageEntries, pageIndex) => (
+    <div
+      key={pageIndex}
+      id={`pdf-root-${pageIndex}`}
+      style={{ width: 900, padding: 26, fontFamily: "Arial, Helvetica, sans-serif", color: "#111", background: "white" }}
+    >
+      <div style={pdfH1}>Timesheet</div>
+      <div style={pdfSub}>WindPro Timesheet MCE</div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16 }}>
-            <div style={pdfBox}>
-              <div style={{ fontSize: 16, lineHeight: 1.8 }}>
-                <div><span style={{ opacity: 0.75 }}>Period:</span> {selectedPeriod.label}</div>
-                <div><span style={{ opacity: 0.75 }}>Invoice date:</span> {selectedPeriod.invoiceDateISO}</div>
-                <div><span style={{ opacity: 0.75 }}>Submitted by:</span> {activeEmail || "-"}</div>
-                <div><span style={{ opacity: 0.75 }}>Name:</span> {activeUser.name || "-"}</div>
-              </div>
-            </div>
-
-            <div style={pdfBox}>
-              <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.8 }}>
-                <div>Total hours: {(Number(totals.hours) || 0).toFixed(2)}</div>
-                <div>Total expenses: € {(Number(totals.expenses) || 0).toFixed(2)}</div>
-                <div>Total pay: € {(Number(totals.pay) || 0).toFixed(2)}</div>
-              </div>
-              <div style={{ marginTop: 14, fontSize: 12, opacity: 0.85 }}>Generated: {generatedStr}</div>
+      {/* Header mare doar pe pagina 1 */}
+      {pageIndex === 0 ? (
+        <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16 }}>
+          <div style={pdfBox}>
+            <div style={{ fontSize: 16, lineHeight: 1.8 }}>
+              <div><span style={{ opacity: 0.75 }}>Period:</span> {selectedPeriod.label}</div>
+              <div><span style={{ opacity: 0.75 }}>Invoice date:</span> {selectedPeriod.invoiceDateISO}</div>
+              <div><span style={{ opacity: 0.75 }}>Submitted by:</span> {activeEmail || "-"}</div>
+              <div><span style={{ opacity: 0.75 }}>Name:</span> {activeUser.name || "-"}</div>
             </div>
           </div>
 
-          <div style={pdfTitle}>Entries (Selected Period)</div>
-
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th style={pdfTh}>Date</th>
-                <th style={pdfTh}>Work type</th>
-                <th style={pdfTh}>Vessel</th>
-                <th style={pdfTh}>Location</th>
-                <th style={pdfTh}>Hours</th>
-                <th style={pdfTh}>Rate</th>
-                <th style={pdfTh}>Pay</th>
-                <th style={pdfTh}>SW</th>
-                <th style={pdfTh}>Expenses</th>
-                <th style={pdfTh}>Work note</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {periodEntries.map((e) => {
-                const rate = Number(e.ratePerHour) || 0;
-                const hours = Number(e.hours) || 0;
-                const pay = hours * rate;
-                const expSum = (e.expenses || []).reduce((a, x) => a + (Number(x.amount) || 0), 0);
-                const vessel = (e.vesselManual || e.vesselPreset || "").trim();
-
-                return (
-                  <tr key={e.dateISO}>
-                    <td style={pdfTd}>{e.dateISO}</td>
-                    <td style={pdfTd}>{e.workType}</td>
-                    <td style={pdfTd}>{vessel}</td>
-                    <td style={pdfTd}>{e.location}</td>
-                    <td style={pdfTd}>{hours.toFixed(2)}</td>
-                    <td style={pdfTd}>€ {rate.toFixed(2)}</td>
-                    <td style={pdfTd}>€ {pay.toFixed(2)}</td>
-                    <td style={pdfTd}>{e.serviceWorker}</td>
-                    <td style={pdfTd}>€ {expSum.toFixed(2)}</td>
-                    <td style={pdfTd}>{e.workNote}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 18, alignItems: "start" }}>
-            <div>
-              <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 10 }}>Totals</div>
-              <div style={{ fontSize: 14, lineHeight: 1.8 }}>
-                <div>Hours: {(Number(totals.hours) || 0).toFixed(2)}</div>
-                <div>Expenses: € {(Number(totals.expenses) || 0).toFixed(2)}</div>
-                <div>Pay: € {(Number(totals.pay) || 0).toFixed(2)}</div>
-              </div>
+          <div style={pdfBox}>
+            <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.8 }}>
+              <div>Total hours: {(Number(totals.hours) || 0).toFixed(2)}</div>
+              <div>Total expenses: € {(Number(totals.expenses) || 0).toFixed(2)}</div>
+              <div>Total pay: € {(Number(totals.pay) || 0).toFixed(2)}</div>
             </div>
-
-            <div>
-              <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 10 }}>Signature</div>
-              <div style={{ border: "1px solid #eee", borderRadius: 10, height: 170, overflow: "hidden" }}>
-                {activePeriodSig ? (
-                  <img
-                    src={activePeriodSig}
-                    alt="signature"
-                    style={{ width: "100%", height: "100%", objectFit: "contain" }}
-                  />
-                ) : null}
-              </div>
-            </div>
+            <div style={{ marginTop: 14, fontSize: 12, opacity: 0.85 }}>Generated: {generatedStr}</div>
           </div>
-          {/* END PDF TEMPLATE */}
         </div>
-      </div>
+      ) : (
+        <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
+          Period: {selectedPeriod.label} • Page {pageIndex + 1}/{periodEntryPages.length}
+        </div>
+      )}
+
+      <div style={pdfTitle}>Entries (Selected Period)</div>
+
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th style={pdfTh}>Date</th>
+            <th style={pdfTh}>Work type</th>
+            <th style={pdfTh}>Vessel</th>
+            <th style={pdfTh}>Location</th>
+            <th style={pdfTh}>Hours</th>
+            <th style={pdfTh}>Rate</th>
+            <th style={pdfTh}>Pay</th>
+            <th style={pdfTh}>SW</th>
+            <th style={pdfTh}>Expenses</th>
+            <th style={pdfTh}>Work note</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {pageEntries.map((e) => {
+            const rate = Number(e.ratePerHour) || 0;
+            const hours = Number(e.hours) || 0;
+            const pay = hours * rate;
+            const expSum = (e.expenses || []).reduce((a, x) => a + (Number(x.amount) || 0), 0);
+            const vessel = (e.vesselManual || e.vesselPreset || "").trim();
+
+            return (
+              <tr key={e.dateISO}>
+                <td style={pdfTd}>{e.dateISO}</td>
+                <td style={pdfTd}>{e.workType}</td>
+                <td style={pdfTd}>{vessel}</td>
+                <td style={pdfTd}>{e.location}</td>
+                <td style={pdfTd}>{hours.toFixed(2)}</td>
+                <td style={pdfTd}>€ {rate.toFixed(2)}</td>
+                <td style={pdfTd}>€ {pay.toFixed(2)}</td>
+                <td style={pdfTd}>{e.serviceWorker}</td>
+                <td style={pdfTd}>€ {expSum.toFixed(2)}</td>
+                <td style={pdfTd}>{e.workNote}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      {/* Totals + Signature doar pe ultima pagină */}
+      {pageIndex === periodEntryPages.length - 1 ? (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 18, alignItems: "start" }}>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 10 }}>Totals</div>
+            <div style={{ fontSize: 14, lineHeight: 1.8 }}>
+              <div>Hours: {(Number(totals.hours) || 0).toFixed(2)}</div>
+              <div>Expenses: € {(Number(totals.expenses) || 0).toFixed(2)}</div>
+              <div>Pay: € {(Number(totals.pay) || 0).toFixed(2)}</div>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 10 }}>Signature</div>
+            <div style={{ border: "1px solid #eee", borderRadius: 10, height: 170, overflow: "hidden" }}>
+              {activePeriodSig ? (
+                <img src={activePeriodSig} alt="signature" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
-  );
-}
+  ))}
+</div>
