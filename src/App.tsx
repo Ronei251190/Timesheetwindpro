@@ -560,20 +560,16 @@ ${activeUser.name}
 
       const API_BASE = window.location.hostname === "localhost" ? "https://windprotimesheet.vercel.app" : "";
       const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to,
-          subject,
-          message,
-          filename,
-          pdfBase64,
-          user: { name: activeUser.name, email: activeEmail },
-          period: { id: selectedPeriod.id, label: selectedPeriod.label },
-          totals: { hours: totals.hours, pay: totals.pay, expenses: totals.expenses },
-        }),
-      });
-
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    to,
+    subject,
+    message,
+    filename,
+    pdfBase64,
+  }),
+});
       const rawText = await resp.text();
       let data: any = null;
       try {
