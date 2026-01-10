@@ -559,17 +559,19 @@ ${activeUser.name}
       const filename = `Timesheet_${selectedPeriod.id}_${activeUser.name}.pdf`;
 
       const API_BASE = window.location.hostname === "localhost" ? "https://windprotimesheet.vercel.app" : "";
-      const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
+const blob = pdf.output("blob");
+
+const form = new FormData();
+form.append("to", to);
+form.append("subject", subject);
+form.append("message", message);
+form.append("file", blob, filename);
+
+const resp = await fetch(`${API_BASE}/api/send-timesheet`, {
   method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    to,
-    subject,
-    message,
-    filename,
-    pdfBase64,
-  }),
+  body: form, // IMPORTANT: fara headers
 });
+
       const rawText = await resp.text();
       let data: any = null;
       try {
