@@ -749,7 +749,7 @@ export default function App() {
 
       await new Promise((r) => setTimeout(r, 50));
       const canvas = await html2canvas(root, {
-        scale: 2,
+        scale: 1.2,
         backgroundColor: "#ffffff",
         useCORS: true,
         logging: false,
@@ -809,7 +809,6 @@ export default function App() {
           amount: Number(x.amount) || 0,
           note: x.note || "",
           fileName: x.fileName,
-          fileDataUrl: x.fileDataUrl,
         })),
       }));
 
