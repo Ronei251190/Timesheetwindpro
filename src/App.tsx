@@ -474,7 +474,7 @@ export default function App() {
     });
 
     const imgData = canvas.toDataURL("image/png");
-    const pdf = new jsPDF("p", "pt", "a4");
+    x`x` = new jsPDF("p", "pt", "a4");
 
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
@@ -494,9 +494,7 @@ export default function App() {
       pdf.addImage(imgData, "PNG", 0, y, imgWidth, imgHeight);
       remaining -= pageHeight;
     }
-
-    pdf.save(`Timesheet_${selectedPeriod.id}_${activeEmail}.pdf`);
-  };
+const blob = pdf.output("blob");
 
   /** ===== Submit: generate PDF + send email + lock ===== */
   const submitEmailAndLock = async () => {
