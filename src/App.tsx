@@ -543,7 +543,6 @@ export default function App() {
 
       // ✅ base64 fără prefix
       const pdfDataUri = pdf.output("datauristring");
-      const pdfBase64 = pdfDataUri.split(",")[1] || "";
 
       const to = "borot@windpro.pl"; // schimbă aici dacă vrei
       const subject = `WindPro TimeSheet MCE - ${selectedPeriod.id} - ${activeUser.name}`;
