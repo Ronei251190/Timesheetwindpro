@@ -36,8 +36,7 @@ export default async function handler(req: any, res: any) {
     return res.end();
   }
 
-  if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "Method not allowed" });
-
+  if (req.method !== "POST") return sendJson(res, 200, { ok: true, id: (resp as any)?.data?.id || null });
   try {
     const body: ReqBody = req.body || {};
     const to = String(body.to || "").trim();

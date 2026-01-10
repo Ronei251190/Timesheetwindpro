@@ -841,7 +841,7 @@ export default function App() {
       }
 
       lockPeriod();
-      setSubmitMsg("✅ Submitted + emailed + locked.");
+     setSubmitMsg(`✅ Submitted + emailed + locked. Resend id: ${data?.id || "n/a"}`);
       setSubmitMenuOpen(false);
     } catch (err: any) {
       console.error(err);
