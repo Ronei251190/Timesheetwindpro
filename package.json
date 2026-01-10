@@ -15,6 +15,7 @@
     "cors": "^2.8.5",
     "date-fns": "^4.1.0",
     "express": "^4.19.2",
+    "formidable": "^3.5.4",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.0.0",
     "jspdf-autotable": "^5.0.7",

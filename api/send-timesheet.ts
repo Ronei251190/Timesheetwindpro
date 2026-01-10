@@ -4,9 +4,7 @@ import formidable, { File as FormidableFile } from "formidable";
 import fs from "fs";
 
 export const config = {
-  api: {
-    bodyParser: false, // IMPORTANT pentru multipart
-  },
+  api: { bodyParser: false },
 };
 
 function sendJson(res: VercelResponse, status: number, data: any) {
@@ -21,42 +19,6 @@ function parseForm(req: VercelRequest) {
       else resolve({ fields, files });
     });
   });
-}
-
-async function sendViaSMTP(args: { to: string; subject: string; message: string; filename: string; pdfBuffer: Buffer }) {
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || 465);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.MAIL_FROM;
-
-  if (!host || !user || !pass || !from) {
-    throw new Error("Missing SMTP env (SMTP_HOST/SMTP_USER/SMTP_PASS/MAIL_FROM).");
-  }
-
-  const transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: { user, pass },
-  });
-
-  const info = await transporter.sendMail({
-    from,
-    to: args.to,
-    subject: args.subject,
-    text: args.message,
-    html: `<p>${args.message.replace(/\n/g, "<br/>")}</p>`,
-    attachments: [
-      {
-        filename: args.filename,
-        content: args.pdfBuffer,
-        contentType: "application/pdf",
-      },
-    ],
-  });
-
-  return { provider: "smtp", id: info.messageId || null };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -77,11 +39,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const filename = String(file.originalFilename || "timesheet.pdf");
     const pdfBuffer = fs.readFileSync(file.filepath);
 
-    const result = await sendViaSMTP({ to, subject, message, filename, pdfBuffer });
+    const host = process.env.SMTP_HOST;
+    const port = Number(process.env.SMTP_PORT || 465);
+    const user = process.env.SMTP_USER;
+    const pass = process.env.SMTP_PASS;
+    const from = process.env.MAIL_FROM;
 
-    return sendJson(res, 200, { ok: true, ...result });
+    if (!host || !user || !pass || !from) {
+      return sendJson(res, 500, { ok: false, error: "Missing SMTP env (SMTP_HOST/SMTP_USER/SMTP_PASS/MAIL_FROM)." });
+    }
+
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      auth: { user, pass },
+    });
+
+    const info = await transporter.sendMail({
+      from,
+      to,
+      subject,
+      text: message,
+      html: `<p>${message.replace(/\n/g, "<br/>")}</p>`,
+      attachments: [{ filename, content: pdfBuffer, contentType: "application/pdf" }],
+    });
+
+    return sendJson(res, 200, { ok: true, provider: "smtp", id: info.messageId || null });
   } catch (err: any) {
-    console.error("SEND-TIMESHEET ERROR:", err);
+    console.error("SEND ERROR:", err);
     return sendJson(res, 500, { ok: false, error: err?.message || "Server error" });
   }
 }
