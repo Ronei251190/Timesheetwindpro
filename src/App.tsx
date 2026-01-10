@@ -467,7 +467,7 @@ export default function App() {
     await new Promise((r) => setTimeout(r, 60));
 
     const canvas = await html2canvas(root, {
-      scale: 1, // ✅ reduce size
+      scale: 0.75, // ✅ reduce size
       backgroundColor: "#ffffff",
       useCORS: true,
       logging: false,
