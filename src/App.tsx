@@ -206,8 +206,6 @@ const btnDark: React.CSSProperties = { padding: "12px 14px", borderRadius: 12, b
 
 /** ===================== PDF STYLES ===================== */
 const pdfBox: React.CSSProperties = { border: "1px solid #eee", borderRadius: 10, padding: 16, background: "white" };
-const pdfH1: React.CSSProperties = { fontSize: 34, fontWeight: 900, margin: "0 0 6px 0" };
-const pdfSub: React.CSSProperties = { fontSize: 14, fontWeight: 700, opacity: 0.8, margin: "0 0 14px 0" };
 const pdfTitle: React.CSSProperties = { fontSize: 22, fontWeight: 900, margin: "18px 0 10px" };
 const pdfTh: React.CSSProperties = { border: "1px solid #e5e5e5", padding: "8px 8px", textAlign: "left", fontWeight: 800, background: "#f5f6f8", fontSize: 12 };
 const pdfTd: React.CSSProperties = { border: "1px solid #e5e5e5", padding: "8px 8px", verticalAlign: "top", fontSize: 12 };
