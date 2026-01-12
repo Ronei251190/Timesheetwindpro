@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { addMonths, endOfMonth, format, getDaysInMonth, parseISO, startOfMonth } from "date-fns";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
-
+import windproLogo from "./assets/windpro-logo.png";
 /** ===================== TYPES ===================== */
 type WorkType =
   | "Offshore (Harbour / CTV) DAY SHIFT"
@@ -484,14 +484,14 @@ const exportPdfPeriod = async () => {
     await new Promise((r) => setTimeout(r, 40));
 
     const canvas = await html2canvas(root, {
-      scale: 1,
-      backgroundColor: "#ffffff",
+      scale: 2,
+      backgroundColor:  "#ffffff",
       useCORS: true,
       logging: false,
     });
 
     // ✅ JPEG (mai mic ca PNG -> ajută la 413)
-    const imgData = canvas.toDataURL("image/jpeg", 0.78);
+    const imgData = canvas.toDataURL("image/jpeg", 0.88);
 
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
@@ -548,7 +548,7 @@ const submitEmailAndLock = async () => {
     const blob = pdf.output("blob");
 
     // ✅ Email
-    const to = "borot@windpro.pl";
+    const to = "timesheet@windpro.pl";
    const subject = `WindPro Timesheet MCE ${format(
   parseISO(selectedPeriod.startISO),
   "dd/MM/yyyy"
@@ -1035,125 +1035,188 @@ Kind regards,
         </div>
       </Modal>
 
-            {/* PDF TEMPLATE (HIDDEN) */}
-      <div style={{ position: "absolute", left: -99999, top: 0, width: 900 }}>
-        {periodEntryPages.map((pageEntries, pageIndex) => (
-          <div
-            key={pageIndex}
-            id={`pdf-root-${pageIndex}`}
-            style={{
-              width: 900,
-              padding: 26,
-              fontFamily: "Arial, Helvetica, sans-serif",
-              color: "#111",
-              background: "white",
-            }}
-          >
-            <div style={pdfH1}>Timesheet</div>
-            <div style={pdfSub}>WindPro Timesheet MCE</div>
+{/* PDF TEMPLATE (HIDDEN) */}
+<div style={{ position: "absolute", left: -99999, top: 0, width: 900 }}>
+  {periodEntryPages.map((pageEntries, pageIndex) => (
+    <div
+      key={pageIndex}
+      id={`pdf-root-${pageIndex}`}
+      style={{
+        width: 900,
+        padding: 26,
+        fontFamily: "Arial, Helvetica, sans-serif",
+        color: "#111",
+        background: "white",
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
+      {/* ✅ Logo sus-stânga (în colț) */}
+      <img
+        src={windproLogo}
+        alt="WindPro"
+        style={{
+          position: "absolute",
+          top: 18,
+          left: 18,
+          width: 95,
+          height: "auto",
+          zIndex: 3,
+        }}
+      />
 
-            {pageIndex === 0 ? (
-              <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16 }}>
-                <div style={pdfBox}>
-                  <div style={{ fontSize: 16, lineHeight: 1.8 }}>
-                    <div>
-                      <span style={{ opacity: 0.75 }}>Period:</span> {selectedPeriod.label}
-                    </div>
-                    <div>
-                      <span style={{ opacity: 0.75 }}>Invoice date:</span> {selectedPeriod.invoiceDateISO}
-                    </div>
-                    <div>
-                      <span style={{ opacity: 0.75 }}>Submitted by:</span> {activeEmail || "-"}
-                    </div>
-                    <div>
-                      <span style={{ opacity: 0.75 }}>Name:</span> {activeUser.name || "-"}
-                    </div>
-                  </div>
-                </div>
+      {/* ✅ Watermark în spate (sub text) */}
+      <img
+        src={windproLogo}
+        alt="WindPro watermark"
+        style={{
+          position: "absolute",
+          top: "80%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          width: "70%",
+          height: "auto",
+          opacity: 0.08,
+          zIndex: 0,
+          pointerEvents: "none",
+          filter: "grayscale(100%)",
+        }}
+      />
 
-                <div style={pdfBox}>
-                  <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.8 }}>
-                    <div>Total hours: {(Number(totals.hours) || 0).toFixed(2)}</div>
-                    <div>Total expenses: € {(Number(totals.expenses) || 0).toFixed(2)}</div>
-                    <div>Total pay: € {(Number(totals.pay) || 0).toFixed(2)}</div>
-                  </div>
-                  <div style={{ marginTop: 14, fontSize: 12, opacity: 0.85 }}>Generated: {generatedStr}</div>
-                </div>
-              </div>
-            ) : (
-              <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
-                Period: {selectedPeriod.label} • Page {pageIndex + 1}/{periodEntryPages.length}
-              </div>
-            )}
+      {/* ✅ TOT conținutul tău existent trebuie să fie peste watermark */}
+      <div
+  style={{
+    position: "relative",
+    zIndex: 2,
+    paddingTop: 90, // 👈 SPAȚIU sub logo
+  }}
+>
 
-            <div style={pdfTitle}>Entries (Selected Period)</div>
+        {/* === AICI rămâne fix ce aveai tu: Timesheet, boxes, tabel etc === */}
 
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th style={pdfTh}>Date</th>
-                  <th style={pdfTh}>Work type</th>
-                  <th style={pdfTh}>Vessel</th>
-                  <th style={pdfTh}>Location</th>
-                  <th style={pdfTh}>Hours</th>
-                  <th style={pdfTh}>Rate</th>
-                  <th style={pdfTh}>Pay</th>
-                  <th style={pdfTh}>SW</th>
-                  <th style={pdfTh}>Expenses</th>
-                  <th style={pdfTh}>Work note</th>
-                </tr>
-              </thead>
+{/* HEADER PDF */}
+<div
+  style={{
+    display: "flex",
+    alignItems: "center",
+    gap: 16,
+    marginBottom: 22,
+  }}
+>
 
-              <tbody>
-                {pageEntries.map((e) => {
-                  const rate = Number(e.ratePerHour) || 0;
-                  const hours = Number(e.hours) || 0;
-                  const pay = hours * rate;
-                  const expSum = (e.expenses || []).reduce((a, x) => a + (Number(x.amount) || 0), 0);
-                  const vessel = (e.vesselManual || e.vesselPreset || "").trim();
+  {/* TITLU */}
+  <div>
+    <div style={{ fontSize: 34, fontWeight: 900 }}>Timesheet</div>
+    <div style={{ fontSize: 14, fontWeight: 700, opacity: 0.75 }}>
+      WindPro Timesheet MCE
+    </div>
+  </div>
+</div>
 
-                  return (
-                    <tr key={e.dateISO}>
-                      <td style={pdfTd}>{e.dateISO}</td>
-                      <td style={pdfTd}>{e.workType}</td>
-                      <td style={pdfTd}>{vessel}</td>
-                      <td style={pdfTd}>{e.location}</td>
-                      <td style={pdfTd}>{hours.toFixed(2)}</td>
-                      <td style={pdfTd}>€ {rate.toFixed(2)}</td>
-                      <td style={pdfTd}>€ {pay.toFixed(2)}</td>
-                      <td style={pdfTd}>{e.serviceWorker}</td>
-                      <td style={pdfTd}>€ {expSum.toFixed(2)}</td>
-                      <td style={pdfTd}>{e.workNote}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
 
-            {pageIndex === periodEntryPages.length - 1 ? (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 18, alignItems: "start" }}>
+        {pageIndex === 0 ? (
+          <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16 }}>
+            <div style={pdfBox}>
+              <div style={{ fontSize: 16, lineHeight: 1.8 }}>
                 <div>
-                  <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 10 }}>Totals</div>
-                  <div style={{ fontSize: 14, lineHeight: 1.8 }}>
-                    <div>Hours: {(Number(totals.hours) || 0).toFixed(2)}</div>
-                    <div>Expenses: € {(Number(totals.expenses) || 0).toFixed(2)}</div>
-                    <div>Pay: € {(Number(totals.pay) || 0).toFixed(2)}</div>
-                  </div>
+                  <span style={{ opacity: 0.75 }}>Period:</span> {selectedPeriod.label}
                 </div>
-
                 <div>
-                  <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 10 }}>Signature</div>
-                  <div style={{ border: "1px solid #eee", borderRadius: 10, height: 170, overflow: "hidden" }}>
-                    {activePeriodSig ? (
-                      <img src={activePeriodSig} alt="signature" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-                    ) : null}
-                  </div>
+                  <span style={{ opacity: 0.75 }}>Invoice date:</span> {selectedPeriod.invoiceDateISO}
+                </div>
+                <div>
+                  <span style={{ opacity: 0.75 }}>Submitted by:</span> {activeEmail || "-"}
+                </div>
+                <div>
+                  <span style={{ opacity: 0.75 }}>Name:</span> {activeUser.name || "-"}
                 </div>
               </div>
-            ) : null}
+            </div>
+
+            <div style={pdfBox}>
+              <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.8 }}>
+                <div>Total hours: {(Number(totals.hours) || 0).toFixed(2)}</div>
+                <div>Total expenses: € {(Number(totals.expenses) || 0).toFixed(2)}</div>
+                <div>Total pay: € {(Number(totals.pay) || 0).toFixed(2)}</div>
+              </div>
+              <div style={{ marginTop: 14, fontSize: 12, opacity: 0.85 }}>Generated: {generatedStr}</div>
+            </div>
           </div>
-        ))}
+        ) : (
+          <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 10 }}>
+            Period: {selectedPeriod.label} • Page {pageIndex + 1}/{periodEntryPages.length}
+          </div>
+        )}
+
+        <div style={pdfTitle}>Entries (Selected Period)</div>
+
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th style={pdfTh}>Date</th>
+              <th style={pdfTh}>Work type</th>
+              <th style={pdfTh}>Vessel</th>
+              <th style={pdfTh}>Location</th>
+              <th style={pdfTh}>Hours</th>
+              <th style={pdfTh}>Rate</th>
+              <th style={pdfTh}>Pay</th>
+              <th style={pdfTh}>SW</th>
+              <th style={pdfTh}>Expenses</th>
+              <th style={pdfTh}>Work note</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {pageEntries.map((e) => {
+              const rate = Number(e.ratePerHour) || 0;
+              const hours = Number(e.hours) || 0;
+              const pay = hours * rate;
+              const expSum = (e.expenses || []).reduce((a, x) => a + (Number(x.amount) || 0), 0);
+              const vessel = (e.vesselManual || e.vesselPreset || "").trim();
+
+              return (
+                <tr key={e.dateISO}>
+                  <td style={pdfTd}>{e.dateISO}</td>
+                  <td style={pdfTd}>{e.workType}</td>
+                  <td style={pdfTd}>{vessel}</td>
+                  <td style={pdfTd}>{e.location}</td>
+                  <td style={pdfTd}>{hours.toFixed(2)}</td>
+                  <td style={pdfTd}>€ {rate.toFixed(2)}</td>
+                  <td style={pdfTd}>€ {pay.toFixed(2)}</td>
+                  <td style={pdfTd}>{e.serviceWorker}</td>
+                  <td style={pdfTd}>€ {expSum.toFixed(2)}</td>
+                  <td style={pdfTd}>{e.workNote}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        {pageIndex === periodEntryPages.length - 1 ? (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 18, alignItems: "start" }}>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 10 }}>Totals</div>
+              <div style={{ fontSize: 14, lineHeight: 1.8 }}>
+                <div>Hours: {(Number(totals.hours) || 0).toFixed(2)}</div>
+                <div>Expenses: € {(Number(totals.expenses) || 0).toFixed(2)}</div>
+                <div>Pay: € {(Number(totals.pay) || 0).toFixed(2)}</div>
+              </div>
+            </div>
+
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 10 }}>Signature</div>
+              <div style={{ border: "1px solid #eee", borderRadius: 10, height: 170, overflow: "hidden" }}>
+                {activePeriodSig ? (
+                  <img src={activePeriodSig} alt="signature" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
+    </div>
+  ))}
+</div>
     </div>
   );
 }
