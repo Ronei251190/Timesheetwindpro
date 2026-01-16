@@ -30,4 +30,5 @@ export const USERS: Record<string, string> = {
 };
 
 // opțional – permiți doar emailuri windpro.pl (dacă vrei restricție)
-export const ALLOWED_DOMAIN = "windpro.pl";
+export const ALLOWED_DOMAIN = "";
+

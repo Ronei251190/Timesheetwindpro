@@ -3,6 +3,7 @@ import { addMonths, endOfMonth, format, getDaysInMonth, parseISO, startOfMonth }
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 import windproLogo from "./assets/windpro-logo.png";
+import { USERS } from "./auth/users.local";
 
 /** ===================== TYPES ===================== */
 type WorkType =
@@ -1995,9 +1996,9 @@ export default function App() {
     if (!email || !email.includes("@")) return alert("Bagă un email valid.");
     if (!pass) return alert("Bagă parola.");
 
-    const expectedPassword = USER_PASSWORDS[email];
-    if (!expectedPassword) return alert("Email neînregistrat. Contactează admin.");
-    if (pass !== expectedPassword) return alert("Parolă greșită.");
+    const expectedPassword = USERS[email];
+    if (!expectedPassword) return alert("unregistered email. contact your admin.");
+    if (pass !== expectedPassword) return alert("wrong password.");
 
     setState((p) => ({ ...p, loginEmail: email, loginPass: "", isUserLoggedIn: true }));
   };
