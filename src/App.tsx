@@ -121,10 +121,6 @@ const ADMIN_EMAILS = ADMIN_EMAILS_ENV.split(",").map((x: string) => x.trim().toL
 /** ===================== CONSTS ===================== */
 const LS_KEY = "windpro_timesheet_mce_with_admin_portal_v1";
 
-const USER_PASSWORDS: Record<string, string> = {
-  "borot@windpro.pl": "Bogdan2026!",
-  "bogda@windpro.pl": "Bogdan2026!",
-};
 
 const WORK_TYPES: WorkType[] = [
   "Offshore (Harbour / CTV) DAY SHIFT",
