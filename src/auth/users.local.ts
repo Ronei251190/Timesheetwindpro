@@ -1,10 +1,10 @@
 // src/auth/users.local.ts
-// Lista oficială angajați WindPro – USER LOGIN
-// Email = username | Parola = cod WINDPRO-XXXX
+// WindPro Timesheet - USERS (login)
+// Email = username | Password = code
 
 export const USERS: Record<string, string> = {
   // === WINDPRO (corporate) ===
-  "th@windpro.pl": "WINDPRO-1001",        // Tomasz Hynda
+  "th@windpro.pl": "WINDPRO-ADMIN", // Tomasz Hynda (Owner/Admin)
   "rorog@windpro.pl": "WINDPRO-1002",
   "sebor@windpro.pl": "WINDPRO-1003",
   "kajus@windpro.pl": "WINDPRO-1004",
@@ -14,35 +14,35 @@ export const USERS: Record<string, string> = {
   "rmsbn@windpro.pl": "WINDPRO-1008",
   "tokzz@windpro.pl": "WINDPRO-1009",
   "knima@windpro.pl": "WINDPRO-1010",
-  "mamat@windpro.pl": "WINDPRO-1011",     // Marcin Matysiak
-  "shnor@windpro.pl": "WINDPRO-1012",     // Shane
+  "mamat@windpro.pl": "WINDPRO-1011", // Marcin Matysiak
+  "shnor@windpro.pl": "WINDPRO-1012", // Shane
   "minis@windpro.pl": "WINDPRO-1013",
   "adapa@windpro.pl": "WINDPRO-1014",
-  "pizin@windpro.pl": "WINDPRO-1015",     // Piotr Zielinski
+  "pizin@windpro.pl": "WINDPRO-1015", // Piotr Zielinski
   "kajzd@windpro.pl": "WINDPRO-1016",
-  "jagub@windpro.pl": "WINDPRO-1017",     // Jakub Guba
-  "stvor@windpro.pl": "WINDPRO-1018",     // Steve
-  "madzo@windpro.pl": "WINDPRO-1019",     // Mateusz Dziemianko
-  "pamge@windpro.pl": "WINDPRO-1020",     // Pawel Magierowski
-  "sensl@windpro.pl": "WINDPRO-1021",     // Seweryn Slowik
-  "ptrks@windpro.pl": "WINDPRO-1022",     // Patryk Kostrzewa
+  "jagub@windpro.pl": "WINDPRO-1017", // Jakub Guba
+  "stvor@windpro.pl": "WINDPRO-1018", // Steve
+  "madzo@windpro.pl": "WINDPRO-1019", // Mateusz Dziemianko
+  "pamge@windpro.pl": "WINDPRO-1020", // Pawel Magierowski
+  "sensl@windpro.pl": "WINDPRO-1021", // Seweryn Slowik
+  "ptrks@windpro.pl": "WINDPRO-1022", // Patryk Kostrzewa
   "rbmsz@windpro.pl": "WINDPRO-1023",
-  "jawnk@windpro.pl": "WINDPRO-1024",     // Jakub Wnuk
+  "jawnk@windpro.pl": "WINDPRO-1024", // Jakub Wnuk
   "rbnaz@windpro.pl": "WINDPRO-1025",
-  "rakla@windpro.pl": "WINDPRO-1026",     // Rafal
+  "rakla@windpro.pl": "WINDPRO-1026", // Rafal
   "pappl@windpro.pl": "WINDPRO-1027",
   "rajje@windpro.pl": "WINDPRO-1028",
-  "mrzgo@windpro.pl": "WINDPRO-1029",     // Mariusz
-  "mimik@windpro.pl": "WINDPRO-1030",     // Maciej Mikolajek
-  "kokul@windpro.pl": "WINDPRO-1031",     // Konrad Kulig
-  "mirad@windpro.pl": "WINDPRO-1032",     // Michal Radosz
+  "mrzgo@windpro.pl": "WINDPRO-1029", // Mariusz
+  "mimik@windpro.pl": "WINDPRO-1030", // Maciej Mikolajek
+  "kokul@windpro.pl": "WINDPRO-1031", // Konrad Kulig
+  "mirad@windpro.pl": "WINDPRO-1032", // Michal Radosz
 
   // === EXTERN / PRIVATE EMAILS ===
-  "jasont071173@gmail.com": "WINDPRO-2001",      // Jason Templeman
-  "vais78@yahoo.com": "WINDPRO-2002",            // Vadim Marcenkov
-  "ruslanspavlovs@outlook.com": "WINDPRO-2003",  // Ruslans Pavlovs
+  "jasont071173@gmail.com": "WINDPRO-2001",
+  "vais78@yahoo.com": "WINDPRO-2002",
+  "ruslanspavlovs@outlook.com": "WINDPRO-2003",
   "kpax228@gmail.com": "WINDPRO-2004",
-  "d.cerankowski@gmail.com": "WINDPRO-2005",     // Damian Cerankowski
+  "d.cerankowski@gmail.com": "WINDPRO-2005",
   "solraf@wp.pl": "WINDPRO-2006",
   "jacekpudlinski@gmail.com": "WINDPRO-2007",
   "wojtek.szypryt@gmail.com": "WINDPRO-2008",
@@ -82,6 +82,9 @@ export const USERS: Record<string, string> = {
   "pamag@magawind.com": "WINDPRO-2042",
   "m.jablonski010@gmail.com": "WINDPRO-2043",
 
- 
-// ❌ NU folosim restricție de domeniu (permit și Gmail / WP / O2)
+  // === YOU (employee) ===
+  "bogdan.bitzy@yahoo.com": "WINDPRO-2044",
+};
+
+// IMPORTANT: allow any domain (gmail/wp/o2/yahoo ok)
 export const ALLOWED_DOMAIN = "";
