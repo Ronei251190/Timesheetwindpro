@@ -1128,7 +1128,8 @@ function TimesheetApp({ state, setState }: { state: AppState; setState: React.Di
         logging: false,
       });
 
-      const imgData = canvas.toDataURL("image/jpeg", quality);
+      const imgData = canvas.toDataURL("image/png"); // ✅ mai sharp decât JPEG
+
 
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
@@ -1137,7 +1138,7 @@ function TimesheetApp({ state, setState }: { state: AppState; setState: React.Di
       const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
       if (i > 0) pdf.addPage();
-      pdf.addImage(imgData, "JPEG", 0, 0, imgWidth, Math.min(imgHeight, pageHeight), undefined, "FAST");
+      pdf.addImage(imgData, "PNG", 0, 0, imgWidth, Math.min(imgHeight, pageHeight), undefined, "FAST");
     }
     return pdf;
   };
@@ -1251,7 +1252,8 @@ function TimesheetApp({ state, setState }: { state: AppState; setState: React.Di
 
     try {
       // PDF 1 – Timesheet
-      const pdf1 = await buildPdfForPeriod(1.2, 0.80);
+      const pdf1 = await buildPdfForPeriod(3, 1.0); // ✅ claritate mare
+
       const blob1 = pdf1.output("blob");
 
       // PDF 2 – Expenses attachments
