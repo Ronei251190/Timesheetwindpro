@@ -58,11 +58,32 @@ type StoredUser = {
   signatureByPeriod: Record<string, string | null>;
 };
 
+type SubmitStatus = "submitted" | "email_sent" | "failed";
+
+type SubmitLog = {
+  id: string;
+  userEmail: string;
+  userName: string;
+  periodId: string; // YYYY-MM
+  periodStartISO: string;
+  periodEndISO: string;
+  submittedAtISO: string; // new Date().toISOString()
+  daysCount: number;
+  totalHours: number;
+  totalPay: number;
+  totalExpenses: number;
+  status: SubmitStatus;
+  note?: string; // error details
+};
+
 type AppState = {
-  // login
-  isLoggedIn: boolean;
+  // user login
+  isUserLoggedIn: boolean;
   loginEmail: string;
   loginPass: string;
+
+  // admin login
+  isAdminLoggedIn: boolean;
 
   // period
   selectedPeriodId: string;
@@ -77,6 +98,9 @@ type AppState = {
 
   // users
   users: Record<string, StoredUser>;
+
+  // audit
+  submitLogs: SubmitLog[];
 };
 
 type Period = {
@@ -87,17 +111,18 @@ type Period = {
   invoiceDateISO: string;
 };
 
+/** ===================== ENV (ADMIN) ===================== */
+const ADMIN_USER = (import.meta as any).env?.VITE_ADMIN_USER || "ADMIN";
+const ADMIN_PASS = (import.meta as any).env?.VITE_ADMIN_PASS || ""; // must be set in Vercel env
+const ADMIN_EMAILS_ENV = (import.meta as any).env?.VITE_ADMIN_EMAILS || "timesheet@windpro.pl";
+const ADMIN_EMAILS = ADMIN_EMAILS_ENV.split(",").map((x: string) => x.trim().toLowerCase()).filter(Boolean);
+
 /** ===================== CONSTS ===================== */
-const LS_KEY = "windpro_timesheet_mce_v2_stable";
+const LS_KEY = "windpro_timesheet_mce_with_admin_portal_v1";
 
-const ADMIN_EMAILS = ["bogda@windpro.pl", "borot@windpro.pl"];
-const ADMIN_PASSWORD = "WINDPRO123!";
-
-// === USER PASSWORDS (login individual) ===
 const USER_PASSWORDS: Record<string, string> = {
   "borot@windpro.pl": "Bogdan2026!",
   "bogda@windpro.pl": "Bogdan2026!",
-  // "nume@windpro.pl": "Parola123!",
 };
 
 const WORK_TYPES: WorkType[] = [
@@ -123,7 +148,6 @@ const WORK_TYPES: WorkType[] = [
 
 const EXP_TYPES: ExpenseType[] = ["Taxi", "Hotel", "Food", "Diesel", "Extra luggage", "PPE", "Other"];
 const PLATFORM_TYPES: PlatformType[] = ["SOV", "Jack-up", "CTV / Harbour", "N/A"];
-
 const VESSEL_PRESETS = ["Blue Tern", "Discovery Wind", "Apollo Wind", "Nobelwind", "Aeolus", "SOV (Other)", "Jack-up (Other)"];
 
 /** ===================== HELPERS ===================== */
@@ -197,9 +221,11 @@ function generateMonthlyPeriods(fromYear = 2025, toYear = 2050): Period[] {
 
 /** ===================== STORAGE ===================== */
 const DEFAULT_STATE: AppState = {
-  isLoggedIn: false,
+  isUserLoggedIn: false,
   loginEmail: "",
   loginPass: "",
+
+  isAdminLoggedIn: false,
 
   selectedPeriodId: format(new Date(), "yyyy-MM"),
   selectedDateISO: todayISO(),
@@ -210,6 +236,7 @@ const DEFAULT_STATE: AppState = {
   multiSelectedISOs: [],
 
   users: {},
+  submitLogs: [],
 };
 
 function loadState(): AppState {
@@ -221,6 +248,7 @@ function loadState(): AppState {
       users: raw?.users || {},
       lockedPeriodIds: raw?.lockedPeriodIds || [],
       multiSelectedISOs: raw?.multiSelectedISOs || [],
+      submitLogs: raw?.submitLogs || [],
     };
   } catch {
     return DEFAULT_STATE;
@@ -282,6 +310,17 @@ const btnDark: React.CSSProperties = {
   fontWeight: 900,
   cursor: "pointer",
 };
+
+const badge = (bg: string, color: string): React.CSSProperties => ({
+  display: "inline-flex",
+  alignItems: "center",
+  padding: "4px 10px",
+  borderRadius: 999,
+  background: bg,
+  color,
+  fontWeight: 900,
+  fontSize: 12,
+});
 
 /** ===================== PDF STYLES (compact) ===================== */
 const pdfTh: React.CSSProperties = {
@@ -385,19 +424,21 @@ function Modal({
   );
 }
 
-/** ===================== LOGIN VIEW ===================== */
+/** ===================== LOGIN VIEW (USER + ADMIN BUTTON) ===================== */
 function LoginView({
   email,
   password,
   setEmail,
   setPassword,
-  onLogin,
+  onUserLogin,
+  onOpenAdminLogin,
 }: {
   email: string;
   password: string;
   setEmail: (v: string) => void;
   setPassword: (v: string) => void;
-  onLogin: () => void;
+  onUserLogin: () => void;
+  onOpenAdminLogin: () => void;
 }) {
   return (
     <div
@@ -412,7 +453,7 @@ function LoginView({
     >
       <div
         style={{
-          width: "min(520px, 100%)",
+          width: "min(560px, 100%)",
           background: "rgba(255,255,255,0.95)",
           borderRadius: 18,
           border: "1px solid #e9e9e9",
@@ -423,7 +464,13 @@ function LoginView({
           <img src={windproLogo} alt="WindPro" style={{ width: 90, height: "auto" }} />
           <div>
             <div style={{ fontSize: 22, fontWeight: 900 }}>WindPro TimeSheet</div>
-            <div style={{ opacity: 0.75, fontWeight: 700 }}>Login</div>
+            <div style={{ opacity: 0.75, fontWeight: 700 }}>User Login</div>
+          </div>
+
+          <div style={{ marginLeft: "auto" }}>
+            <button onClick={onOpenAdminLogin} style={smallBtn}>
+              Admin portal
+            </button>
           </div>
         </div>
 
@@ -450,17 +497,342 @@ function LoginView({
           />
         </div>
 
-        <button onClick={onLogin} style={{ ...btnBlue, width: "100%", marginTop: 14 }}>
+        <button onClick={onUserLogin} style={{ ...btnBlue, width: "100%", marginTop: 14 }}>
           Login
         </button>
 
-        <div style={{ marginTop: 12, fontSize: 12, opacity: 0.75 }}>* Email-ul rămâne salvat local în browser (localStorage).</div>
+        <div style={{ marginTop: 12, fontSize: 12, opacity: 0.75 }}>* Datele rămân salvate local în browser (localStorage).</div>
       </div>
     </div>
   );
 }
 
-/** ===================== MAIN APP ===================== */
+/** ===================== ADMIN LOGIN ===================== */
+function AdminLoginView({
+  adminUser,
+  adminPass,
+  setAdminUser,
+  setAdminPass,
+  onAdminLogin,
+  onBack,
+  error,
+}: {
+  adminUser: string;
+  adminPass: string;
+  setAdminUser: (v: string) => void;
+  setAdminPass: (v: string) => void;
+  onAdminLogin: () => void;
+  onBack: () => void;
+  error: string;
+}) {
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "grid",
+        placeItems: "center",
+        padding: 18,
+        background: "linear-gradient(135deg, #0b1b3a, #0f3d91)",
+        fontFamily: "Georgia, 'Times New Roman', serif",
+      }}
+    >
+      <div
+        style={{
+          width: "min(560px, 100%)",
+          background: "rgba(255,255,255,0.95)",
+          borderRadius: 18,
+          border: "1px solid #e9e9e9",
+          padding: 18,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <img src={windproLogo} alt="WindPro" style={{ width: 90, height: "auto" }} />
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 900 }}>WindPro TimeSheet</div>
+            <div style={{ opacity: 0.75, fontWeight: 700 }}>Admin Portal</div>
+          </div>
+          <div style={{ marginLeft: "auto" }}>
+            <button onClick={onBack} style={smallBtn}>
+              ← Back
+            </button>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16 }}>
+          <div style={lbl}>Admin Username</div>
+          <input value={adminUser} onChange={(e) => setAdminUser(e.target.value)} style={strongInput} placeholder="ADMIN" autoComplete="username" />
+        </div>
+
+        <div style={{ marginTop: 16 }}>
+          <div style={lbl}>Admin Password</div>
+          <input type="password" value={adminPass} onChange={(e) => setAdminPass(e.target.value)} style={strongInput} placeholder="••••••••" autoComplete="current-password" />
+        </div>
+
+        {error ? (
+          <div style={{ marginTop: 10, padding: 10, borderRadius: 12, border: "1px solid #f0bcbc", background: "#fff6f6", color: "#b55", fontWeight: 800 }}>
+            {error}
+          </div>
+        ) : null}
+
+        <button onClick={onAdminLogin} style={{ ...btnDark, width: "100%", marginTop: 14 }}>
+          Admin Login
+        </button>
+
+        {!ADMIN_PASS ? (
+          <div style={{ marginTop: 12, fontSize: 12, opacity: 0.85 }}>
+            ⚠️ <b>Setează VITE_ADMIN_PASS</b> în Vercel Environment Variables, altfel admin login nu poate fi folosit.
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** ===================== ADMIN DASHBOARD ===================== */
+function AdminDashboard({
+  state,
+  setState,
+}: {
+  state: AppState;
+  setState: React.Dispatch<React.SetStateAction<AppState>>;
+}) {
+  const periods = useMemo(() => generateMonthlyPeriods(2025, 2050), []);
+  const [periodId, setPeriodId] = useState(state.selectedPeriodId);
+  const period = useMemo(() => periods.find((p) => p.id === periodId) || periods[0], [periods, periodId]);
+
+  const logs = useMemo(() => {
+    const sorted = [...(state.submitLogs || [])].sort((a, b) => (a.submittedAtISO < b.submittedAtISO ? 1 : -1));
+    return sorted;
+  }, [state.submitLogs]);
+
+  const logsForPeriod = useMemo(() => logs.filter((l) => l.periodId === periodId), [logs, periodId]);
+
+  const knownUsers = useMemo(() => {
+    // “expected users” = cei care au conturi salvate în users (au intrat măcar o dată)
+    const entries = Object.entries(state.users || {});
+    const out = entries.map(([email, u]) => ({ email, name: trim1(u?.name) || "" }));
+    out.sort((a, b) => a.email.localeCompare(b.email));
+    return out;
+  }, [state.users]);
+
+  const submittedSet = useMemo(() => new Set(logsForPeriod.map((l) => l.userEmail.toLowerCase())), [logsForPeriod]);
+
+  const submitted = useMemo(() => knownUsers.filter((u) => submittedSet.has(u.email.toLowerCase())), [knownUsers, submittedSet]);
+  const missing = useMemo(() => knownUsers.filter((u) => !submittedSet.has(u.email.toLowerCase())), [knownUsers, submittedSet]);
+
+  const statusChip = (s: SubmitStatus) => {
+    if (s === "email_sent") return <span style={badge("#eaffef", "#178a3a")}>EMAIL SENT</span>;
+    if (s === "failed") return <span style={badge("#fff1f1", "#b55")}>FAILED</span>;
+    return <span style={badge("#eef3ff", "#1f5eff")}>SUBMITTED</span>;
+  };
+
+  const exportCsv = () => {
+    const rows = [
+      ["submittedAt", "userEmail", "userName", "periodId", "periodStart", "periodEnd", "days", "hours", "pay", "expenses", "status", "note"].join(","),
+      ...logs.map((l) =>
+        [
+          l.submittedAtISO,
+          l.userEmail,
+          (l.userName || "").replaceAll(",", " "),
+          l.periodId,
+          l.periodStartISO,
+          l.periodEndISO,
+          String(l.daysCount),
+          String(l.totalHours),
+          String(l.totalPay),
+          String(l.totalExpenses),
+          l.status,
+          (l.note || "").replaceAll(",", " ").replaceAll("\n", " "),
+        ].join(",")
+      ),
+    ].join("\n");
+
+    const blob = new Blob([rows], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `windpro_submit_logs_${format(new Date(), "yyyy-MM-dd")}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const clearAllLogs = () => {
+    const ok = window.confirm("Ștergi toate submit logs? (doar local, în browserul ăsta)");
+    if (!ok) return;
+    setState((p) => ({ ...p, submitLogs: [] }));
+  };
+
+  return (
+    <div style={{ maxWidth: 1280, margin: "0 auto", padding: 18, fontFamily: "Georgia, 'Times New Roman', serif" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <img src={windproLogo} alt="WindPro" style={{ width: 70, height: "auto" }} />
+          <div>
+            <div style={{ fontSize: 24, fontWeight: 900 }}>Admin Portal</div>
+            <div style={{ opacity: 0.7 }}>Submissions • Who is missing • Export</div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <button style={smallBtn} onClick={exportCsv}>
+            Export CSV
+          </button>
+          <button style={{ ...smallBtn, borderColor: "#f0bcbc", color: "#b55" }} onClick={clearAllLogs}>
+            Clear logs
+          </button>
+          <button style={smallBtn} onClick={() => setState((p) => ({ ...p, isAdminLoggedIn: false }))}>
+            Logout Admin
+          </button>
+        </div>
+      </div>
+
+      <div
+        style={{
+          padding: 14,
+          borderRadius: 14,
+          border: "1px solid #eee",
+          background: "white",
+          display: "grid",
+          gridTemplateColumns: "1fr 320px",
+          gap: 12,
+          alignItems: "center",
+        }}
+      >
+        <div>
+          <div style={{ fontWeight: 900, marginBottom: 6 }}>Pay period</div>
+          <select value={periodId} onChange={(e) => setPeriodId(e.target.value)} style={{ ...input, maxWidth: 420 }}>
+            {periods.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label} ({p.startISO} → {p.endISO})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ borderLeft: "1px solid #eee", paddingLeft: 12 }}>
+          <div style={{ fontWeight: 900, marginBottom: 6 }}>Known users (local)</div>
+          <div style={{ opacity: 0.85 }}>{knownUsers.length} users detected in this browser</div>
+          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
+            Tip: “Known users” apar după ce ei au făcut login cel puțin o dată pe device-ul acesta.
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginTop: 14 }}>
+        <Card title="Selected period" big={period.label}>
+          <div>
+            {period.startISO} → {period.endISO} | Invoice {period.invoiceDateISO}
+          </div>
+        </Card>
+        <Card title="Submitted (known users)" big={`${submitted.length}`}>
+          <div style={{ opacity: 0.85 }}>{submitted.map((u) => u.email).slice(0, 3).join(", ")}{submitted.length > 3 ? "..." : ""}</div>
+        </Card>
+        <Card title="Missing (known users)" big={`${missing.length}`}>
+          <div style={{ opacity: 0.85 }}>{missing.map((u) => u.email).slice(0, 3).join(", ")}{missing.length > 3 ? "..." : ""}</div>
+        </Card>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 16, marginTop: 16 }}>
+        {/* LOGS */}
+        <div style={{ borderRadius: 14, border: "1px solid #eee", padding: 16, background: "white" }}>
+          <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 10 }}>Submissions log</div>
+
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "Arial, Helvetica, sans-serif", fontSize: 13 }}>
+              <thead>
+                <tr>
+                  <th style={{ ...pdfTh, fontSize: 12 }}>Submitted</th>
+                  <th style={{ ...pdfTh, fontSize: 12 }}>User</th>
+                  <th style={{ ...pdfTh, fontSize: 12 }}>Period</th>
+                  <th style={{ ...pdfTh, fontSize: 12 }}>Days</th>
+                  <th style={{ ...pdfTh, fontSize: 12 }}>Hours</th>
+                  <th style={{ ...pdfTh, fontSize: 12 }}>Pay</th>
+                  <th style={{ ...pdfTh, fontSize: 12 }}>Expenses</th>
+                  <th style={{ ...pdfTh, fontSize: 12 }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.length === 0 ? (
+                  <tr>
+                    <td style={pdfTd} colSpan={8}>
+                      No submissions yet.
+                    </td>
+                  </tr>
+                ) : (
+                  logs.map((l) => (
+                    <tr key={l.id}>
+                      <td style={pdfTd}>{format(parseISO(l.submittedAtISO), "yyyy-MM-dd HH:mm")}</td>
+                      <td style={pdfTd}>
+                        <div style={{ fontWeight: 800 }}>{l.userEmail}</div>
+                        <div style={{ opacity: 0.75 }}>{l.userName}</div>
+                      </td>
+                      <td style={pdfTd}>
+                        <div style={{ fontWeight: 800 }}>{l.periodId}</div>
+                        <div style={{ opacity: 0.75 }}>
+                          {l.periodStartISO} → {l.periodEndISO}
+                        </div>
+                      </td>
+                      <td style={pdfTd}>{l.daysCount}</td>
+                      <td style={pdfTd}>{l.totalHours.toFixed(2)}</td>
+                      <td style={pdfTd}>€ {l.totalPay.toFixed(2)}</td>
+                      <td style={pdfTd}>€ {l.totalExpenses.toFixed(2)}</td>
+                      <td style={pdfTd}>
+                        {statusChip(l.status)}
+                        {l.note ? <div style={{ marginTop: 6, fontSize: 12, opacity: 0.8 }}>Note: {l.note}</div> : null}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* MISSING */}
+        <div style={{ borderRadius: 14, border: "1px solid #eee", padding: 16, background: "white" }}>
+          <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 10 }}>Who still needs to submit</div>
+
+          <div style={{ padding: 12, borderRadius: 12, border: "1px solid #eee", background: "#fafafa" }}>
+            <div style={{ fontWeight: 900 }}>Period:</div>
+            <div style={{ opacity: 0.85 }}>{period.startISO} → {period.endISO}</div>
+          </div>
+
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontWeight: 900, marginBottom: 6 }}>✅ Submitted</div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {submitted.length === 0 ? <div style={{ opacity: 0.75 }}>None</div> : null}
+              {submitted.map((u) => (
+                <div key={u.email} style={{ padding: 10, borderRadius: 12, border: "1px solid #e7f7ec", background: "#f4fff7" }}>
+                  <div style={{ fontWeight: 900 }}>{u.email}</div>
+                  <div style={{ opacity: 0.8 }}>{u.name || "-"}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontWeight: 900, marginBottom: 6 }}>⏳ Missing</div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {missing.length === 0 ? <div style={{ opacity: 0.75 }}>None</div> : null}
+              {missing.map((u) => (
+                <div key={u.email} style={{ padding: 10, borderRadius: 12, border: "1px solid #ffe4e4", background: "#fff7f7" }}>
+                  <div style={{ fontWeight: 900 }}>{u.email}</div>
+                  <div style={{ opacity: 0.8 }}>{u.name || "-"}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginTop: 14, fontSize: 12, opacity: 0.75 }}>
+            Dacă vrei centralizat pentru firmă (fără dependență de browser), îți fac Firestore/Google Sheet în 10-15 linii de API + dashboard.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** ===================== MAIN USER APP ===================== */
 function TimesheetApp({ state, setState }: { state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>> }) {
   const periods = useMemo(() => generateMonthlyPeriods(2025, 2050), []);
   const selectedPeriod = useMemo(
@@ -469,11 +841,13 @@ function TimesheetApp({ state, setState }: { state: AppState; setState: React.Di
   );
 
   const activeEmail = useMemo(() => normalizeEmail(state.loginEmail), [state.loginEmail]);
-  const isAdmin = useMemo(() => !!activeEmail && ADMIN_EMAILS.includes(activeEmail), [activeEmail]);
+  const emailIsCompanyAdmin = useMemo(() => (activeEmail ? ADMIN_EMAILS.includes(activeEmail) : false), [activeEmail]);
 
   useEffect(() => {
     if (!activeEmail) return;
-    setState((prev) => (prev.users[activeEmail] ? prev : { ...prev, users: { ...prev.users, [activeEmail]: makeDefaultUser() } }));
+    setState((prev) =>
+      prev.users[activeEmail] ? prev : { ...prev, users: { ...prev.users, [activeEmail]: makeDefaultUser() } }
+    );
   }, [activeEmail, setState]);
 
   const activeUser = useMemo<StoredUser>(() => {
@@ -660,10 +1034,12 @@ function TimesheetApp({ state, setState }: { state: AppState; setState: React.Di
   const lockPeriod = () =>
     setState((p) => (p.lockedPeriodIds.includes(selectedPeriod.id) ? p : { ...p, lockedPeriodIds: [...p.lockedPeriodIds, selectedPeriod.id] }));
 
-  const unlockAdmin = () => {
-    if (!isAdmin) return alert("Admin only.");
-    const pass = window.prompt("Admin password:");
-    if (pass !== ADMIN_PASSWORD) return alert("Wrong password.");
+  // IMPORTANT: unlock by Admin Portal only (not user)
+  const unlockAdminLocal = () => {
+    // allow only if email is in admin emails (extra safety)
+    if (!emailIsCompanyAdmin) return alert("Not allowed.");
+    const pass = window.prompt("Admin password (portal):");
+    if (!pass || pass !== ADMIN_PASS) return alert("Wrong password.");
     setState((p) => ({ ...p, lockedPeriodIds: p.lockedPeriodIds.filter((id) => id !== selectedPeriod.id) }));
   };
 
@@ -845,7 +1221,7 @@ function TimesheetApp({ state, setState }: { state: AppState; setState: React.Di
     }
   };
 
-  /** ===================== SUBMIT (2 PDFs) ===================== */
+  /** ===================== SUBMIT (2 PDFs) + AUDIT LOG ===================== */
   const submitEmailAndLock = async () => {
     if (!activeEmail) return alert("Login first.");
     if (!trim1(activeUser.name)) return alert("Add your name.");
@@ -854,6 +1230,24 @@ function TimesheetApp({ state, setState }: { state: AppState; setState: React.Di
 
     setSubmitBusy(true);
     setSubmitMsg("");
+
+    // create audit log entry first
+    const baseLog: SubmitLog = {
+      id: uid("submit"),
+      userEmail: activeEmail,
+      userName: trim1(activeUser.name),
+      periodId: selectedPeriod.id,
+      periodStartISO: selectedPeriod.startISO,
+      periodEndISO: selectedPeriod.endISO,
+      submittedAtISO: new Date().toISOString(),
+      daysCount: periodEntries.length,
+      totalHours: round2(periodEntries.reduce((a, e) => a + clampNum(e.hours, 0), 0)),
+      totalPay: round2(periodEntries.reduce((a, e) => a + clampNum(e.hours, 0) * clampNum(e.ratePerHour, 0), 0)),
+      totalExpenses: round2(periodEntries.reduce((a, e) => a + (e.expenses || []).reduce((b, x) => b + clampNum(x.amount, 0), 0), 0)),
+      status: "submitted",
+    };
+
+    setState((p) => ({ ...p, submitLogs: [baseLog, ...(p.submitLogs || [])] }));
 
     try {
       // PDF 1 – Timesheet
@@ -897,7 +1291,6 @@ ${trim1(activeUser.name)}`;
       form.append("text", messageText);
       form.append("html", messageHtml);
 
-      // ✅ IMPORTANT: 2 attachments
       form.append("file1", blob1, filename1);
       if (blob2) form.append("file2", blob2, filename2);
 
@@ -916,11 +1309,23 @@ ${trim1(activeUser.name)}`;
         throw new Error(`${data?.error || "Send failed"} (${resp.status}) ${details}`);
       }
 
+      // mark log as email_sent
+      setState((p) => ({
+        ...p,
+        submitLogs: (p.submitLogs || []).map((x) => (x.id === baseLog.id ? { ...x, status: "email_sent" } : x)),
+      }));
+
       lockPeriod();
       setSubmitMsg(`✅ Submitted + emailed + locked. Id: ${data?.id || "n/a"}`);
       setSubmitMenuOpen(false);
     } catch (err: any) {
       console.error(err);
+
+      setState((p) => ({
+        ...p,
+        submitLogs: (p.submitLogs || []).map((x) => (x.id === baseLog.id ? { ...x, status: "failed", note: String(err?.message || err) } : x)),
+      }));
+
       setSubmitMsg(`❌ Submit failed: ${err?.message || "unknown error"}`);
     } finally {
       setSubmitBusy(false);
@@ -943,7 +1348,7 @@ ${trim1(activeUser.name)}`;
           </div>
         </div>
 
-        <button style={smallBtn} onClick={() => setState((p) => ({ ...p, isLoggedIn: false }))}>
+        <button style={smallBtn} onClick={() => setState((p) => ({ ...p, isUserLoggedIn: false }))}>
           Logout
         </button>
       </div>
@@ -970,11 +1375,16 @@ ${trim1(activeUser.name)}`;
 
           <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", alignItems: "center", gap: 10 }}>
             <div style={{ opacity: 0.8 }}>Name:</div>
-            <input value={activeUser.name} onChange={(e) => setUserPatch({ name: e.target.value })} placeholder="ex: Bogdan Rotariu" style={strongInput} />
+            <input
+              value={activeUser.name}
+              onChange={(e) => setUserPatch({ name: e.target.value })}
+              placeholder="ex: Bogdan Rotariu"
+              style={strongInput}
+            />
           </div>
 
           <div style={{ fontSize: 12, opacity: 0.7 }}>
-            Status: <b>{isLocked ? "Locked" : "Editable"}</b> {isAdmin ? "• Admin" : ""}
+            Status: <b>{isLocked ? "Locked" : "Editable"}</b>
           </div>
         </div>
 
@@ -1014,7 +1424,7 @@ ${trim1(activeUser.name)}`;
                   position: "absolute",
                   right: 0,
                   top: "110%",
-                  width: 300,
+                  width: 320,
                   background: "white",
                   border: "1px solid #eee",
                   borderRadius: 12,
@@ -1058,14 +1468,17 @@ ${trim1(activeUser.name)}`;
             )}
           </div>
 
-          <button onClick={unlockAdmin} style={{ ...smallBtn, borderColor: "#f0bcbc", color: "#b55" }}>
+          {/* Unlock (optional local) */}
+          <button onClick={unlockAdminLocal} style={{ ...smallBtn, borderColor: "#f0bcbc", color: "#b55" }} title="Works only if your email is in VITE_ADMIN_EMAILS + correct admin password">
             Unlock (Admin)
           </button>
         </div>
       </div>
 
       {submitMsg ? (
-        <div style={{ marginTop: 10, padding: 10, borderRadius: 12, border: "1px solid #eee", background: "white" }}>{submitMsg}</div>
+        <div style={{ marginTop: 10, padding: 10, borderRadius: 12, border: "1px solid #eee", background: "white" }}>
+          {submitMsg}
+        </div>
       ) : null}
 
       {/* CARDS */}
@@ -1091,7 +1504,11 @@ ${trim1(activeUser.name)}`;
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
             <label style={{ display: "flex", gap: 10, alignItems: "center", fontWeight: 800 }}>
-              <input type="checkbox" checked={state.multiMode} onChange={(e) => setState((p) => ({ ...p, multiMode: e.target.checked, multiSelectedISOs: [] }))} />
+              <input
+                type="checkbox"
+                checked={state.multiMode}
+                onChange={(e) => setState((p) => ({ ...p, multiMode: e.target.checked, multiSelectedISOs: [] }))}
+              />
               Multi-select days
             </label>
 
@@ -1396,7 +1813,6 @@ ${trim1(activeUser.name)}`;
       </Modal>
 
       {/* ===================== PDF TEMPLATE (HIDDEN) ===================== */}
-      {/* 794px ~ A4 width at 96dpi -> PDF nu mai iese “dezordonat” */}
       <div style={{ position: "absolute", left: -99999, top: 0, width: 794 }}>
         {periodEntryPages.map((pageEntries, pageIndex) => (
           <div
@@ -1414,10 +1830,8 @@ ${trim1(activeUser.name)}`;
               overflow: "hidden",
             }}
           >
-            {/* Logo */}
             <img src={windproLogo} alt="WindPro" style={{ position: "absolute", top: 14, left: 14, width: 78, height: "auto", zIndex: 3 }} />
 
-            {/* Watermark */}
             <img
               src={windproLogo}
               alt="WindPro watermark"
@@ -1436,7 +1850,6 @@ ${trim1(activeUser.name)}`;
             />
 
             <div style={{ position: "relative", zIndex: 2, paddingTop: 68 }}>
-              {/* Header */}
               <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 12 }}>
                 <div>
                   <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 2 }}>Timesheet</div>
@@ -1453,16 +1866,8 @@ ${trim1(activeUser.name)}`;
                 </div>
               </div>
 
-              {/* ✅ PAGE 1 SUMMARY – ca în poza 2 (2 chenare compacte) */}
               {pageIndex === 0 ? (
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1.2fr 1fr",
-                    gap: 14,
-                    marginBottom: 14,
-                  }}
-                >
+                <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 14, marginBottom: 14 }}>
                   <div style={{ border: "1px solid #e3e3e3", borderRadius: 10, padding: 12, fontSize: 10 }}>
                     <div style={{ marginBottom: 6 }}>
                       <b>Period:</b> {selectedPeriod.label}
@@ -1479,20 +1884,14 @@ ${trim1(activeUser.name)}`;
                   </div>
 
                   <div style={{ border: "1px solid #e3e3e3", borderRadius: 10, padding: 12 }}>
-                    <div style={{ fontWeight: 900, fontSize: 12, marginBottom: 6 }}>
-                      Total hours: {(Number(totals.hours) || 0).toFixed(2)}
-                    </div>
-                    <div style={{ fontWeight: 900, fontSize: 12, marginBottom: 6 }}>
-                      Total expenses: € {(Number(totals.expenses) || 0).toFixed(2)}
-                    </div>
+                    <div style={{ fontWeight: 900, fontSize: 12, marginBottom: 6 }}>Total hours: {(Number(totals.hours) || 0).toFixed(2)}</div>
+                    <div style={{ fontWeight: 900, fontSize: 12, marginBottom: 6 }}>Total expenses: € {(Number(totals.expenses) || 0).toFixed(2)}</div>
                     <div style={{ fontWeight: 900, fontSize: 12 }}>Total pay: € {(Number(totals.pay) || 0).toFixed(2)}</div>
-
                     <div style={{ marginTop: 8, fontSize: 9, opacity: 0.7 }}>Generated: {generatedStr}</div>
                   </div>
                 </div>
               ) : null}
 
-              {/* Entries */}
               <div style={{ fontSize: 14, fontWeight: 900, margin: "10px 0 8px" }}>Entries (Selected Period)</div>
 
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -1537,7 +1936,6 @@ ${trim1(activeUser.name)}`;
                 </tbody>
               </table>
 
-              {/* Totals + Signature on last page */}
               {pageIndex === periodEntryPages.length - 1 ? (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 12, alignItems: "start" }}>
                   <div style={{ border: "1px solid #e3e3e3", borderRadius: 10, padding: 12 }}>
@@ -1570,7 +1968,13 @@ export default function App() {
   const [state, setState] = useState<AppState>(() => loadState());
   useEffect(() => saveState(state), [state]);
 
-  const doLogin = () => {
+  // UI state for admin login view
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [adminUser, setAdminUser] = useState("");
+  const [adminPass, setAdminPass] = useState("");
+  const [adminErr, setAdminErr] = useState("");
+
+  const doUserLogin = () => {
     const email = normalizeEmail(state.loginEmail);
     const pass = trim1(state.loginPass);
 
@@ -1581,10 +1985,68 @@ export default function App() {
     if (!expectedPassword) return alert("Email neînregistrat. Contactează admin.");
     if (pass !== expectedPassword) return alert("Parolă greșită.");
 
-    setState((p) => ({ ...p, loginEmail: email, loginPass: "", isLoggedIn: true }));
+    setState((p) => ({ ...p, loginEmail: email, loginPass: "", isUserLoggedIn: true }));
   };
 
-  if (!state.isLoggedIn) {
+  const doAdminLogin = () => {
+    setAdminErr("");
+
+    if (!ADMIN_PASS) {
+      setAdminErr("Admin password is not configured (VITE_ADMIN_PASS).");
+      return;
+    }
+
+    const u = trim1(adminUser);
+    const p = trim1(adminPass);
+
+    if (!u || !p) {
+      setAdminErr("Completează user + parolă.");
+      return;
+    }
+
+    if (u !== ADMIN_USER || p !== ADMIN_PASS) {
+      setAdminErr("Credențiale greșite.");
+      return;
+    }
+
+    setState((s) => ({ ...s, isAdminLoggedIn: true }));
+    setAdminUser("");
+    setAdminPass("");
+  };
+
+  // ADMIN PORTAL takes priority
+  if (state.isAdminLoggedIn) {
+    return (
+      <ErrorBoundary>
+        <AdminDashboard state={state} setState={setState} />
+      </ErrorBoundary>
+    );
+  }
+
+  // ADMIN LOGIN SCREEN
+  if (showAdminLogin) {
+    return (
+      <ErrorBoundary>
+        <AdminLoginView
+          adminUser={adminUser}
+          adminPass={adminPass}
+          setAdminUser={setAdminUser}
+          setAdminPass={setAdminPass}
+          onAdminLogin={doAdminLogin}
+          onBack={() => {
+            setShowAdminLogin(false);
+            setAdminErr("");
+            setAdminUser("");
+            setAdminPass("");
+          }}
+          error={adminErr}
+        />
+      </ErrorBoundary>
+    );
+  }
+
+  // USER LOGIN SCREEN
+  if (!state.isUserLoggedIn) {
     return (
       <ErrorBoundary>
         <LoginView
@@ -1592,12 +2054,14 @@ export default function App() {
           password={state.loginPass}
           setEmail={(v) => setState((p) => ({ ...p, loginEmail: v }))}
           setPassword={(v) => setState((p) => ({ ...p, loginPass: v }))}
-          onLogin={doLogin}
+          onUserLogin={doUserLogin}
+          onOpenAdminLogin={() => setShowAdminLogin(true)}
         />
       </ErrorBoundary>
     );
   }
 
+  // USER APP
   return (
     <ErrorBoundary>
       <TimesheetApp state={state} setState={setState} />
