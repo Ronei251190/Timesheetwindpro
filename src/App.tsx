@@ -1985,19 +1985,19 @@ export default function App() {
   const [adminPass, setAdminPass] = useState("");
   const [adminErr, setAdminErr] = useState("");
 
-  const doUserLogin = () => {
-    const email = normalizeEmail(state.loginEmail);
-    const pass = trim1(state.loginPass);
+ const doUserLogin = () => {
+  const email = normalizeEmail(state.loginEmail);
+  const pass = (state.loginPass || "").trim();
 
-    if (!email || !email.includes("@")) return alert("Bagă un email valid.");
-    if (!pass) return alert("Bagă parola.");
+  if (!email || !email.includes("@")) return alert("Bagă un email valid.");
+  if (!pass) return alert("Bagă parola.");
 
-    const expectedPassword = USERS[email];
-    if (!expectedPassword) return alert("unregistered email. contact your admin.");
-    if (pass !== expectedPassword) return alert("wrong password.");
+  const expectedPassword = USERS[email];
+  if (!expectedPassword) return alert("unregistered email. contact your admin.");
+  if (pass !== expectedPassword) return alert("wrong password.");
 
-    setState((p) => ({ ...p, loginEmail: email, loginPass: "", isUserLoggedIn: true }));
-  };
+  setState((p) => ({ ...p, loginEmail: email, loginPass: "", isUserLoggedIn: true }));
+};
 
   const doAdminLogin = () => {
     setAdminErr("");
