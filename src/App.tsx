@@ -34,14 +34,14 @@ type Expense = {
   amount: number;
   note: string;
   fileName?: string;
-  fileDataUrl?: string; // saved local only (NOT sent to API)
+  fileDataUrl?: string; // local only
 };
 
 type DayEntry = {
   dateISO: string;
   workType: WorkType;
   hours: number;
-  ratePerHour: number; // per day
+  ratePerHour: number;
   location: string;
   serviceWorker: string;
   platformType: PlatformType;
@@ -63,7 +63,6 @@ type AppState = {
   isLoggedIn: boolean;
   loginEmail: string;
   loginPass: string;
-
 
   // period
   selectedPeriodId: string;
@@ -93,11 +92,11 @@ const LS_KEY = "windpro_timesheet_mce_v2_stable";
 
 const ADMIN_EMAILS = ["bogda@windpro.pl", "borot@windpro.pl"];
 const ADMIN_PASSWORD = "WINDPRO123!";
+
 // === USER PASSWORDS (login individual) ===
 const USER_PASSWORDS: Record<string, string> = {
   "borot@windpro.pl": "Bogdan2026!",
   "bogda@windpro.pl": "Bogdan2026!",
-  // adaugi aici alți utilizatori:
   // "nume@windpro.pl": "Parola123!",
 };
 
@@ -125,15 +124,7 @@ const WORK_TYPES: WorkType[] = [
 const EXP_TYPES: ExpenseType[] = ["Taxi", "Hotel", "Food", "Diesel", "Extra luggage", "PPE", "Other"];
 const PLATFORM_TYPES: PlatformType[] = ["SOV", "Jack-up", "CTV / Harbour", "N/A"];
 
-const VESSEL_PRESETS = [
-  "Blue Tern",
-  "Discovery Wind",
-  "Apollo Wind",
-  "Nobelwind",
-  "Aeolus",
-  "SOV (Other)",
-  "Jack-up (Other)",
-];
+const VESSEL_PRESETS = ["Blue Tern", "Discovery Wind", "Apollo Wind", "Nobelwind", "Aeolus", "SOV (Other)", "Jack-up (Other)"];
 
 /** ===================== HELPERS ===================== */
 const uid = (prefix = "id") => `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
@@ -146,6 +137,7 @@ const clampNum = (n: any, fallback = 0) => {
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const todayISO = () => format(new Date(), "yyyy-MM-dd");
 const inRangeISO = (dateISO: string, startISO: string, endISO: string) => dateISO >= startISO && dateISO <= endISO;
+
 const chunk = <T,>(arr: T[], size: number) => {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
@@ -209,7 +201,6 @@ const DEFAULT_STATE: AppState = {
   loginEmail: "",
   loginPass: "",
 
-
   selectedPeriodId: format(new Date(), "yyyy-MM"),
   selectedDateISO: todayISO(),
 
@@ -238,9 +229,7 @@ function loadState(): AppState {
 function saveState(s: AppState) {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify(s));
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 /** ===================== STYLES ===================== */
@@ -263,6 +252,7 @@ const smallBtn: React.CSSProperties = {
   cursor: "pointer",
   fontWeight: 700,
 };
+
 const btnBlue: React.CSSProperties = {
   padding: "12px 14px",
   borderRadius: 12,
@@ -272,6 +262,7 @@ const btnBlue: React.CSSProperties = {
   fontWeight: 900,
   cursor: "pointer",
 };
+
 const btnGreen: React.CSSProperties = {
   padding: "12px 14px",
   borderRadius: 12,
@@ -281,6 +272,7 @@ const btnGreen: React.CSSProperties = {
   fontWeight: 900,
   cursor: "pointer",
 };
+
 const btnDark: React.CSSProperties = {
   padding: "12px 14px",
   borderRadius: 12,
@@ -291,20 +283,23 @@ const btnDark: React.CSSProperties = {
   cursor: "pointer",
 };
 
-/** ===================== PDF STYLES ===================== */
-const pdfBox: React.CSSProperties = { border: "1px solid #eee", borderRadius: 10, padding: 16, background: "white" };
-const pdfTitle: React.CSSProperties = { fontSize: 22, fontWeight: 900, margin: "18px 0 10px" };
+/** ===================== PDF STYLES (compact) ===================== */
 const pdfTh: React.CSSProperties = {
   border: "1px solid #e5e5e5",
-  padding: "8px 8px",
+  padding: "6px 6px",
   textAlign: "left",
   fontWeight: 800,
   background: "#f5f6f8",
-  fontSize: 12,
+  fontSize: 10,
 };
-const pdfTd: React.CSSProperties = { border: "1px solid #e5e5e5", padding: "8px 8px", verticalAlign: "top", fontSize: 12 };
+const pdfTd: React.CSSProperties = {
+  border: "1px solid #e5e5e5",
+  padding: "6px 6px",
+  verticalAlign: "top",
+  fontSize: 10,
+};
 
-/** ===================== ERROR BOUNDARY (prevents white page) ===================== */
+/** ===================== ERROR BOUNDARY ===================== */
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; message: string }> {
   constructor(props: any) {
     super(props);
@@ -320,14 +315,11 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
     if (!this.state.hasError) return this.props.children;
     return (
       <div style={{ padding: 20, fontFamily: "Arial" }}>
-        <h2 style={{ marginTop: 0 }}>⚠️ App crashed (nu mai e pagină albă)</h2>
+        <h2 style={{ marginTop: 0 }}>⚠️ App crashed</h2>
         <div style={{ padding: 12, border: "1px solid #f0bcbc", borderRadius: 12, background: "#fff6f6" }}>
           <div style={{ fontWeight: 800, marginBottom: 6 }}>Error:</div>
           <div style={{ whiteSpace: "pre-wrap" }}>{this.state.message}</div>
         </div>
-        <p style={{ opacity: 0.8 }}>
-          Deschide DevTools → Console și copiază primul error roșu dacă vrei să-l fixăm instant.
-        </p>
       </div>
     );
   }
@@ -407,7 +399,6 @@ function LoginView({
   setPassword: (v: string) => void;
   onLogin: () => void;
 }) {
-
   return (
     <div
       style={{
@@ -419,7 +410,15 @@ function LoginView({
         fontFamily: "Georgia, 'Times New Roman', serif",
       }}
     >
-      <div style={{ width: "min(520px, 100%)", background: "rgba(255,255,255,0.95)", borderRadius: 18, border: "1px solid #e9e9e9", padding: 18 }}>
+      <div
+        style={{
+          width: "min(520px, 100%)",
+          background: "rgba(255,255,255,0.95)",
+          borderRadius: 18,
+          border: "1px solid #e9e9e9",
+          padding: 18,
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <img src={windproLogo} alt="WindPro" style={{ width: 90, height: "auto" }} />
           <div>
@@ -438,43 +437,36 @@ function LoginView({
             autoComplete="email"
           />
         </div>
-<div style={{ marginTop: 16 }}>
-  <div style={lbl}>Password</div>
-  <input
-    type="password"
-    value={password}
-    onChange={(e) => setPassword(e.target.value)}
-    style={strongInput}
-    placeholder="••••••••"
-    autoComplete="current-password"
-  />
-</div>
 
-        <button
-          onClick={onLogin}
-          style={{ ...btnBlue, width: "100%", marginTop: 14 }}
-        >
+        <div style={{ marginTop: 16 }}>
+          <div style={lbl}>Password</div>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            style={strongInput}
+            placeholder="••••••••"
+            autoComplete="current-password"
+          />
+        </div>
+
+        <button onClick={onLogin} style={{ ...btnBlue, width: "100%", marginTop: 14 }}>
           Login
         </button>
 
-        <div style={{ marginTop: 12, fontSize: 12, opacity: 0.75 }}>
-          * Email-ul rămâne salvat local în browser (localStorage).
-        </div>
+        <div style={{ marginTop: 12, fontSize: 12, opacity: 0.75 }}>* Email-ul rămâne salvat local în browser (localStorage).</div>
       </div>
     </div>
   );
 }
 
 /** ===================== MAIN APP ===================== */
-function TimesheetApp({
-  state,
-  setState,
-}: {
-  state: AppState;
-  setState: React.Dispatch<React.SetStateAction<AppState>>;
-}) {
+function TimesheetApp({ state, setState }: { state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>> }) {
   const periods = useMemo(() => generateMonthlyPeriods(2025, 2050), []);
-  const selectedPeriod = useMemo(() => periods.find((p) => p.id === state.selectedPeriodId) || periods[0], [periods, state.selectedPeriodId]);
+  const selectedPeriod = useMemo(
+    () => periods.find((p) => p.id === state.selectedPeriodId) || periods[0],
+    [periods, state.selectedPeriodId]
+  );
 
   const activeEmail = useMemo(() => normalizeEmail(state.loginEmail), [state.loginEmail]);
   const isAdmin = useMemo(() => !!activeEmail && ADMIN_EMAILS.includes(activeEmail), [activeEmail]);
@@ -554,10 +546,7 @@ function TimesheetApp({
   }, [entries, selectedPeriod.startISO, selectedPeriod.endISO]);
 
   const ROWS_PER_PAGE = 17;
-  const periodEntryPages = useMemo(() => {
-    // IMPORTANT: always at least 1 page, so PDF template exists
-    return periodEntries.length ? chunk(periodEntries, ROWS_PER_PAGE) : [[]];
-  }, [periodEntries]);
+  const periodEntryPages = useMemo(() => (periodEntries.length ? chunk(periodEntries, ROWS_PER_PAGE) : [[]]), [periodEntries]);
 
   const totals = useMemo(() => {
     const hours = periodEntries.reduce((acc, e) => acc + clampNum(e.hours, 0), 0);
@@ -747,10 +736,9 @@ function TimesheetApp({
     setCopyColleagueOpen(false);
   };
 
-  /** PDF builder */
+  /** ===================== PDF builders ===================== */
   const buildPdfForPeriod = async (scale = 2, quality = 0.88) => {
     const pdf = new jsPDF("p", "pt", "a4");
-
     for (let i = 0; i < periodEntryPages.length; i++) {
       const root = document.getElementById(`pdf-root-${i}`);
       if (!root) throw new Error(`PDF template missing (#pdf-root-${i}).`);
@@ -775,6 +763,73 @@ function TimesheetApp({
       if (i > 0) pdf.addPage();
       pdf.addImage(imgData, "JPEG", 0, 0, imgWidth, Math.min(imgHeight, pageHeight), undefined, "FAST");
     }
+    return pdf;
+  };
+
+  const buildExpensesPdf = async (): Promise<jsPDF | null> => {
+    const items = periodEntries.flatMap((day) =>
+      (day.expenses || [])
+        .filter((ex) => !!ex.fileDataUrl && !!ex.fileName)
+        .map((ex) => ({
+          dateISO: day.dateISO,
+          type: ex.type,
+          amount: Number(ex.amount) || 0,
+          note: ex.note || "",
+          fileName: ex.fileName!,
+          dataUrl: ex.fileDataUrl!,
+        }))
+    );
+
+    if (items.length === 0) return null;
+
+    const pdf = new jsPDF("p", "pt", "a4");
+
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (i > 0) pdf.addPage();
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(14);
+      pdf.text(`Expenses Attachments ${i + 1}/${items.length}`, 40, 45);
+
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(11);
+      pdf.text(`Date: ${it.dateISO}`, 40, 70);
+      pdf.text(`Type: ${it.type}`, 40, 88);
+      pdf.text(`Amount: € ${it.amount.toFixed(2)}`, 40, 106);
+      pdf.text(`Note: ${it.note || "-"}`, 40, 124);
+      pdf.text(`File: ${it.fileName}`, 40, 142);
+
+      const isPdf = it.fileName.toLowerCase().endsWith(".pdf") || it.dataUrl.startsWith("data:application/pdf");
+      if (isPdf) {
+        pdf.setFont("helvetica", "bold");
+        pdf.text("PDF attachment detected. Not embedded in this PDF (browser limitation).", 40, 175);
+        continue;
+      }
+
+      const img = new Image();
+      img.src = it.dataUrl;
+
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error("Image load failed"));
+      });
+
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+
+      const x = 40;
+      const y = 180;
+      const maxW = pageW - 80;
+      const maxH = pageH - y - 40;
+
+      const ratio = Math.min(maxW / img.width, maxH / img.height);
+      const w = img.width * ratio;
+      const h = img.height * ratio;
+
+      const fmt = it.dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
+      pdf.addImage(it.dataUrl, fmt as any, x, y, w, h, undefined, "FAST");
+    }
 
     return pdf;
   };
@@ -790,7 +845,7 @@ function TimesheetApp({
     }
   };
 
-  /** Submit */
+  /** ===================== SUBMIT (2 PDFs) ===================== */
   const submitEmailAndLock = async () => {
     if (!activeEmail) return alert("Login first.");
     if (!trim1(activeUser.name)) return alert("Add your name.");
@@ -801,15 +856,23 @@ function TimesheetApp({
     setSubmitMsg("");
 
     try {
-      const pdf = await buildPdfForPeriod(1.2, 0.78);
-      const blob = pdf.output("blob");
+      // PDF 1 – Timesheet
+      const pdf1 = await buildPdfForPeriod(1.2, 0.80);
+      const blob1 = pdf1.output("blob");
+
+      // PDF 2 – Expenses attachments
+      const pdf2 = await buildExpensesPdf();
+      const blob2 = pdf2 ? pdf2.output("blob") : null;
 
       const to = "timesheet@windpro.pl";
-      const subject = `WindPro Timesheet MCE ${format(parseISO(selectedPeriod.startISO), "dd/MM/yyyy")}-${format(parseISO(selectedPeriod.endISO), "dd/MM/yyyy")}`;
+      const subject = `WindPro Timesheet MCE ${format(parseISO(selectedPeriod.startISO), "dd/MM/yyyy")}-${format(
+        parseISO(selectedPeriod.endISO),
+        "dd/MM/yyyy"
+      )}`;
 
       const messageText = `Hello,
 
-Please find attached the timesheet for the selected period.
+Please find attached the timesheet for the selected period${blob2 ? " (including Expenses Attachments PDF)." : "."}
 
 Kind regards,
 ${trim1(activeUser.name)}`;
@@ -817,24 +880,26 @@ ${trim1(activeUser.name)}`;
       const messageHtml = `
         <div style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #111;">
           <p>Hello,</p>
-          <p>Please find attached the timesheet for the selected period.</p>
+          <p>Please find attached the timesheet for the selected period${blob2 ? " (including Expenses Attachments PDF)." : "."}</p>
           <p>Kind regards,<br/><b>${trim1(activeUser.name)}</b></p>
         </div>
       `;
 
-      const filename = `Timesheet_${selectedPeriod.id}_${trim1(activeUser.name).replace(/\s+/g, "_")}.pdf`;
+      const safeName = trim1(activeUser.name).replace(/\s+/g, "_") || "User";
+      const filename1 = `Timesheet_${selectedPeriod.id}_${safeName}.pdf`;
+      const filename2 = `Expenses_${selectedPeriod.id}_${safeName}.pdf`;
+
       const API_BASE = window.location.hostname === "localhost" ? "https://windprotimesheet.vercel.app" : "";
 
       const form = new FormData();
       form.append("to", to);
       form.append("subject", subject);
-
-      // send ALL variants so backend can pick any
-      form.append("message", messageText);
       form.append("text", messageText);
       form.append("html", messageHtml);
 
-      form.append("file", blob, filename);
+      // ✅ IMPORTANT: 2 attachments
+      form.append("file1", blob1, filename1);
+      if (blob2) form.append("file2", blob2, filename2);
 
       const resp = await fetch(`${API_BASE}/api/send-timesheet`, { method: "POST", body: form });
       const rawText = await resp.text();
@@ -862,7 +927,8 @@ ${trim1(activeUser.name)}`;
     }
   };
 
-  const generatedStr = useMemo(() => format(new Date(), "MM/dd/yyyy, h:mm a"), [selectedPeriod.id]);
+  /** ===================== derived ===================== */
+  const generatedStr = useMemo(() => format(new Date(), "dd/MM/yyyy, HH:mm"), [selectedPeriod.id]);
   const dayExpenseSum = useMemo(() => round2((currentEntry.expenses || []).reduce((a, x) => a + clampNum(x.amount, 0), 0)), [currentEntry.expenses]);
   const dayPay = useMemo(() => round2(clampNum(currentEntry.hours, 0) * clampNum(currentEntry.ratePerHour, 0)), [currentEntry.hours, currentEntry.ratePerHour]);
 
@@ -873,14 +939,11 @@ ${trim1(activeUser.name)}`;
           <img src={windproLogo} alt="WindPro" style={{ width: 70, height: "auto" }} />
           <div>
             <div style={{ fontSize: 24, fontWeight: 900 }}>WindPro TimeSheet</div>
-            <div style={{ opacity: 0.7 }}>PDF pe perioada selectată • Submit = email + lock</div>
+            <div style={{ opacity: 0.7 }}>PDF (Timesheet + Expenses PDF) • Submit = email + lock</div>
           </div>
         </div>
 
-        <button
-          style={smallBtn}
-          onClick={() => setState((p) => ({ ...p, isLoggedIn: false }))}
-        >
+        <button style={smallBtn} onClick={() => setState((p) => ({ ...p, isLoggedIn: false }))}>
           Logout
         </button>
       </div>
@@ -907,12 +970,7 @@ ${trim1(activeUser.name)}`;
 
           <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", alignItems: "center", gap: 10 }}>
             <div style={{ opacity: 0.8 }}>Name:</div>
-            <input
-              value={activeUser.name}
-              onChange={(e) => setUserPatch({ name: e.target.value })}
-              placeholder="ex: Bogdan Rotariu"
-              style={strongInput}
-            />
+            <input value={activeUser.name} onChange={(e) => setUserPatch({ name: e.target.value })} placeholder="ex: Bogdan Rotariu" style={strongInput} />
           </div>
 
           <div style={{ fontSize: 12, opacity: 0.7 }}>
@@ -942,7 +1000,7 @@ ${trim1(activeUser.name)}`;
         {/* Actions */}
         <div style={{ display: "flex", gap: 10, justifySelf: "end", alignItems: "center" }}>
           <button onClick={exportPdfPeriod} style={btnBlue}>
-            Export PDF (Period)
+            Export PDF (Timesheet)
           </button>
 
           <div style={{ position: "relative" }}>
@@ -956,7 +1014,7 @@ ${trim1(activeUser.name)}`;
                   position: "absolute",
                   right: 0,
                   top: "110%",
-                  width: 280,
+                  width: 300,
                   background: "white",
                   border: "1px solid #eee",
                   borderRadius: 12,
@@ -970,7 +1028,7 @@ ${trim1(activeUser.name)}`;
                   disabled={isLocked || submitBusy}
                   onClick={submitEmailAndLock}
                 >
-                  Submit (email + lock period)
+                  Submit (email + lock) — 2 PDFs
                 </button>
 
                 <button
@@ -1007,9 +1065,7 @@ ${trim1(activeUser.name)}`;
       </div>
 
       {submitMsg ? (
-        <div style={{ marginTop: 10, padding: 10, borderRadius: 12, border: "1px solid #eee", background: "white" }}>
-          {submitMsg}
-        </div>
+        <div style={{ marginTop: 10, padding: 10, borderRadius: 12, border: "1px solid #eee", background: "white" }}>{submitMsg}</div>
       ) : null}
 
       {/* CARDS */}
@@ -1035,11 +1091,7 @@ ${trim1(activeUser.name)}`;
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
             <label style={{ display: "flex", gap: 10, alignItems: "center", fontWeight: 800 }}>
-              <input
-                type="checkbox"
-                checked={state.multiMode}
-                onChange={(e) => setState((p) => ({ ...p, multiMode: e.target.checked, multiSelectedISOs: [] }))}
-              />
+              <input type="checkbox" checked={state.multiMode} onChange={(e) => setState((p) => ({ ...p, multiMode: e.target.checked, multiSelectedISOs: [] }))} />
               Multi-select days
             </label>
 
@@ -1174,12 +1226,7 @@ ${trim1(activeUser.name)}`;
             <div style={{ display: "grid", gridTemplateColumns: "1fr 140px 170px", gap: 12, alignItems: "end" }}>
               <label>
                 <div style={lbl}>Work type</div>
-                <select
-                  value={currentEntry.workType}
-                  disabled={isLocked}
-                  onChange={(e) => setEntry({ workType: e.target.value as WorkType })}
-                  style={{ ...input, padding: 10 }}
-                >
+                <select value={currentEntry.workType} disabled={isLocked} onChange={(e) => setEntry({ workType: e.target.value as WorkType })} style={{ ...input, padding: 10 }}>
                   {WORK_TYPES.map((t) => (
                     <option key={t} value={t}>
                       {t}
@@ -1190,29 +1237,12 @@ ${trim1(activeUser.name)}`;
 
               <label>
                 <div style={lbl}>Hours</div>
-                <input
-                  value={currentEntry.hours}
-                  disabled={isLocked}
-                  onChange={(e) => setEntry({ hours: clampNum(e.target.value, 0) })}
-                  type="number"
-                  min={0}
-                  step="0.25"
-                  style={{ ...input, padding: 10 }}
-                />
+                <input value={currentEntry.hours} disabled={isLocked} onChange={(e) => setEntry({ hours: clampNum(e.target.value, 0) })} type="number" min={0} step="0.25" style={{ ...input, padding: 10 }} />
               </label>
 
               <label>
                 <div style={lbl}>Payment rate (€ / hour) (per day)</div>
-                <input
-                  value={currentEntry.ratePerHour}
-                  disabled={isLocked}
-                  onChange={(e) => setEntry({ ratePerHour: clampNum(e.target.value, 0) })}
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  style={{ ...input, padding: 10 }}
-                  placeholder="ex: 44"
-                />
+                <input value={currentEntry.ratePerHour} disabled={isLocked} onChange={(e) => setEntry({ ratePerHour: clampNum(e.target.value, 0) })} type="number" min={0} step="0.01" style={{ ...input, padding: 10 }} placeholder="ex: 44" />
               </label>
             </div>
 
@@ -1224,15 +1254,7 @@ ${trim1(activeUser.name)}`;
               <div style={{ fontWeight: 800, marginBottom: 6 }}>Default rate (optional)</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: 12, alignItems: "end" }}>
                 <div style={{ opacity: 0.8 }}>Setează o rată default ca să se pre-completeze automat pentru zilele noi.</div>
-                <input
-                  value={activeUser.defaultRatePerHour}
-                  onChange={(e) => setUserPatch({ defaultRatePerHour: clampNum(e.target.value, 0) })}
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  style={{ ...input, padding: 10 }}
-                  placeholder="ex: 44"
-                />
+                <input value={activeUser.defaultRatePerHour} onChange={(e) => setUserPatch({ defaultRatePerHour: clampNum(e.target.value, 0) })} type="number" min={0} step="0.01" style={{ ...input, padding: 10 }} placeholder="ex: 44" />
               </div>
             </div>
 
@@ -1357,9 +1379,7 @@ ${trim1(activeUser.name)}`;
       {/* COPY COLLEAGUE MODAL */}
       <Modal open={copyColleagueOpen} title="Copy my colleague (code)" onClose={() => setCopyColleagueOpen(false)}>
         <div style={{ display: "grid", gap: 12 }}>
-          <div style={{ opacity: 0.85 }}>
-            1) Generate code from your selected day OR paste code from colleague. 2) Apply to selected days.
-          </div>
+          <div style={{ opacity: 0.85 }}>1) Generate code from your selected day OR paste code from colleague. 2) Apply to selected days.</div>
           <button style={btnBlue} onClick={generateMyDayCode}>
             Generate code from my selected day
           </button>
@@ -1375,72 +1395,105 @@ ${trim1(activeUser.name)}`;
         </div>
       </Modal>
 
-      {/* PDF TEMPLATE (HIDDEN) */}
-      <div style={{ position: "absolute", left: -99999, top: 0, width: 900 }}>
+      {/* ===================== PDF TEMPLATE (HIDDEN) ===================== */}
+      {/* 794px ~ A4 width at 96dpi -> PDF nu mai iese “dezordonat” */}
+      <div style={{ position: "absolute", left: -99999, top: 0, width: 794 }}>
         {periodEntryPages.map((pageEntries, pageIndex) => (
           <div
             key={pageIndex}
             id={`pdf-root-${pageIndex}`}
             style={{
-              width: 900,
-              padding: 26,
+              width: 794,
+              padding: 18,
               fontFamily: "Arial, Helvetica, sans-serif",
+              fontSize: 10,
+              lineHeight: 1.2,
               color: "#111",
               background: "white",
               position: "relative",
               overflow: "hidden",
             }}
           >
-            <img src={windproLogo} alt="WindPro" style={{ position: "absolute", top: 18, left: 18, width: 95, height: "auto", zIndex: 3 }} />
+            {/* Logo */}
+            <img src={windproLogo} alt="WindPro" style={{ position: "absolute", top: 14, left: 14, width: 78, height: "auto", zIndex: 3 }} />
+
+            {/* Watermark */}
             <img
               src={windproLogo}
               alt="WindPro watermark"
               style={{
                 position: "absolute",
-                top: "75%",
+                top: "74%",
                 left: "50%",
                 transform: "translate(-50%, -50%)",
-                width: "70%",
+                width: "72%",
                 height: "auto",
-                opacity: 0.08,
+                opacity: 0.07,
                 zIndex: 0,
                 pointerEvents: "none",
                 filter: "grayscale(100%)",
               }}
             />
 
-            <div style={{ position: "relative", zIndex: 2, paddingTop: 90 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 18 }}>
+            <div style={{ position: "relative", zIndex: 2, paddingTop: 68 }}>
+              {/* Header */}
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 12 }}>
                 <div>
-                  <div style={{ fontSize: 34, fontWeight: 900 }}>Timesheet</div>
-                  <div style={{ fontSize: 14, fontWeight: 700, opacity: 0.75 }}>WindPro Timesheet MCE</div>
+                  <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 2 }}>Timesheet</div>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, opacity: 0.75 }}>WindPro Timesheet MCE</div>
                 </div>
 
                 <div style={{ marginLeft: "auto", textAlign: "right" }}>
-                  <div style={{ fontSize: 12, opacity: 0.75 }}>Employee</div>
-                  <div style={{ fontSize: 14, fontWeight: 800 }}>{trim1(activeUser.name) || "-"}</div>
-                  <div style={{ fontSize: 12, opacity: 0.75 }}>{activeEmail || "-"}</div>
-                  <div style={{ fontSize: 12, opacity: 0.75 }}>
+                  <div style={{ fontSize: 10, opacity: 0.7 }}>Employee</div>
+                  <div style={{ fontSize: 11, fontWeight: 800 }}>{trim1(activeUser.name) || "-"}</div>
+                  <div style={{ fontSize: 10, opacity: 0.7 }}>{activeEmail || "-"}</div>
+                  <div style={{ fontSize: 10, opacity: 0.7 }}>
                     Page {pageIndex + 1}/{periodEntryPages.length}
                   </div>
                 </div>
               </div>
 
+              {/* ✅ PAGE 1 SUMMARY – ca în poza 2 (2 chenare compacte) */}
               {pageIndex === 0 ? (
-                <div style={pdfBox}>
-                  <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.8 }}>
-                    <div>Total hours: {(Number(totals.hours) || 0).toFixed(2)}</div>
-                    <div>Total expenses: € {(Number(totals.expenses) || 0).toFixed(2)}</div>
-                    <div>Total pay: € {(Number(totals.pay) || 0).toFixed(2)}</div>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1.2fr 1fr",
+                    gap: 14,
+                    marginBottom: 14,
+                  }}
+                >
+                  <div style={{ border: "1px solid #e3e3e3", borderRadius: 10, padding: 12, fontSize: 10 }}>
+                    <div style={{ marginBottom: 6 }}>
+                      <b>Period:</b> {selectedPeriod.label}
+                    </div>
+                    <div style={{ marginBottom: 6 }}>
+                      <b>Invoice date:</b> {selectedPeriod.invoiceDateISO}
+                    </div>
+                    <div style={{ marginBottom: 6 }}>
+                      <b>Submitted by:</b> {activeEmail || "-"}
+                    </div>
+                    <div>
+                      <b>Name:</b> {trim1(activeUser.name) || "-"}
+                    </div>
                   </div>
-                  <div style={{ marginTop: 14, fontSize: 12, opacity: 0.85 }}>Generated: {generatedStr}</div>
-                  <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
-                    Period: {selectedPeriod.startISO} → {selectedPeriod.endISO} • Invoice: {selectedPeriod.invoiceDateISO}
+
+                  <div style={{ border: "1px solid #e3e3e3", borderRadius: 10, padding: 12 }}>
+                    <div style={{ fontWeight: 900, fontSize: 12, marginBottom: 6 }}>
+                      Total hours: {(Number(totals.hours) || 0).toFixed(2)}
+                    </div>
+                    <div style={{ fontWeight: 900, fontSize: 12, marginBottom: 6 }}>
+                      Total expenses: € {(Number(totals.expenses) || 0).toFixed(2)}
+                    </div>
+                    <div style={{ fontWeight: 900, fontSize: 12 }}>Total pay: € {(Number(totals.pay) || 0).toFixed(2)}</div>
+
+                    <div style={{ marginTop: 8, fontSize: 9, opacity: 0.7 }}>Generated: {generatedStr}</div>
                   </div>
                 </div>
               ) : null}
 
-              <div style={pdfTitle}>Entries (Selected Period)</div>
+              {/* Entries */}
+              <div style={{ fontSize: 14, fontWeight: 900, margin: "10px 0 8px" }}>Entries (Selected Period)</div>
 
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
@@ -1484,20 +1537,21 @@ ${trim1(activeUser.name)}`;
                 </tbody>
               </table>
 
+              {/* Totals + Signature on last page */}
               {pageIndex === periodEntryPages.length - 1 ? (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 18, alignItems: "start" }}>
-                  <div>
-                    <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 10 }}>Totals</div>
-                    <div style={{ fontSize: 14, lineHeight: 1.8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 12, alignItems: "start" }}>
+                  <div style={{ border: "1px solid #e3e3e3", borderRadius: 10, padding: 12 }}>
+                    <div style={{ fontSize: 14, fontWeight: 900, marginBottom: 8 }}>Totals</div>
+                    <div style={{ fontSize: 10.5, lineHeight: 1.7 }}>
                       <div>Hours: {(Number(totals.hours) || 0).toFixed(2)}</div>
                       <div>Expenses: € {(Number(totals.expenses) || 0).toFixed(2)}</div>
                       <div>Pay: € {(Number(totals.pay) || 0).toFixed(2)}</div>
                     </div>
                   </div>
 
-                  <div>
-                    <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 10 }}>Signature</div>
-                    <div style={{ border: "1px solid #eee", borderRadius: 10, height: 170, overflow: "hidden" }}>
+                  <div style={{ border: "1px solid #e3e3e3", borderRadius: 10, padding: 12 }}>
+                    <div style={{ fontSize: 14, fontWeight: 900, marginBottom: 8 }}>Signature</div>
+                    <div style={{ border: "1px solid #eee", borderRadius: 10, height: 140, overflow: "hidden", background: "white" }}>
                       {activePeriodSig ? <img src={activePeriodSig} alt="signature" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : null}
                     </div>
                   </div>
@@ -1511,49 +1565,23 @@ ${trim1(activeUser.name)}`;
   );
 }
 
-/** ===================== ROOT APP (Login gate + persistence) ===================== */
+/** ===================== ROOT APP ===================== */
 export default function App() {
   const [state, setState] = useState<AppState>(() => loadState());
-
   useEffect(() => saveState(state), [state]);
 
   const doLogin = () => {
     const email = normalizeEmail(state.loginEmail);
     const pass = trim1(state.loginPass);
 
-    // email valid
-    if (!email || !email.includes("@")) {
-      alert("Bagă un email valid.");
-      return;
-    }
+    if (!email || !email.includes("@")) return alert("Bagă un email valid.");
+    if (!pass) return alert("Bagă parola.");
 
-    // parola completată
-    if (!pass) {
-      alert("Bagă parola.");
-      return;
-    }
-
-    // verificare email înregistrat
     const expectedPassword = USER_PASSWORDS[email];
+    if (!expectedPassword) return alert("Email neînregistrat. Contactează admin.");
+    if (pass !== expectedPassword) return alert("Parolă greșită.");
 
-    if (!expectedPassword) {
-      alert("Email neînregistrat. Contactează admin.");
-      return;
-    }
-
-    // verificare parolă
-    if (pass !== expectedPassword) {
-      alert("Parolă greșită.");
-      return;
-    }
-
-    // ✅ LOGIN REUȘIT
-    setState((p) => ({
-      ...p,
-      loginEmail: email,
-      loginPass: "",
-      isLoggedIn: true,
-    }));
+    setState((p) => ({ ...p, loginEmail: email, loginPass: "", isLoggedIn: true }));
   };
 
   if (!state.isLoggedIn) {
@@ -1576,10 +1604,3 @@ export default function App() {
     </ErrorBoundary>
   );
 }
-  
-
-
-
-
-
-

@@ -7,11 +7,10 @@ import fs from "fs";
 export const config = {
   api: {
     bodyParser: false,
-    sizeLimit: "20mb", // ✅ evită 413 + taieri la PDF
+    sizeLimit: "20mb", // ✅ evită 413
   },
 };
 
-// Forțează runtime Node (ok pentru nodemailer/formidable)
 export const runtime = "nodejs";
 
 function json(res: VercelResponse, status: number, data: any) {
@@ -22,9 +21,9 @@ function json(res: VercelResponse, status: number, data: any) {
 
 function parseMultipart(req: VercelRequest) {
   const form = formidable({
-    multiples: false,
+    multiples: true, // ✅ allow multiple files
     keepExtensions: true,
-    uploadDir: "/tmp", // ✅ important pe Vercel
+    uploadDir: "/tmp", // ✅ Vercel temp
   });
 
   return new Promise<{ fields: Record<string, any>; files: Record<string, any> }>((resolve, reject) => {
@@ -35,13 +34,36 @@ function parseMultipart(req: VercelRequest) {
   });
 }
 
+function pickOne(fileAny: any) {
+  if (!fileAny) return null;
+  return Array.isArray(fileAny) ? fileAny[0] : fileAny;
+}
+
+function getFileInfo(uploaded: any) {
+  if (!uploaded) return null;
+  const filepath = uploaded?.filepath || uploaded?.path; // formidable v2/v3
+  const originalFilename = uploaded?.originalFilename || uploaded?.name || "file.pdf";
+  return { filepath, originalFilename };
+}
+
+// mic helper ca să nu bagi HTML inject în email
+function escapeHtml(input: string) {
+  return String(input || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;")
+    .replaceAll("\n", "<br/>");
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return json(res, 405, { ok: false, error: "Method not allowed" });
 
   try {
     const { fields, files } = await parseMultipart(req);
 
-    // ✅ DESTINATARUL FIRMEI (din Vercel env)
+    // ✅ DESTINATARUL FIRMEI
     const to = String(process.env.COMPANY_EMAIL || "").trim();
 
     // ✅ SMTP config (din Vercel env)
@@ -60,46 +82,73 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const subject = String(fields.subject || "WindPro Timesheet MCE").trim();
-    const message = String(fields.message || "Please find attached the Timesheet for the aferent month.").trim();
 
-    // ✅ fișierul trebuie să vină sub cheia 'file'
-    const fileAny = (files as any).file;
-    const uploaded = Array.isArray(fileAny) ? fileAny[0] : fileAny;
+    // suportă: text/html sau message clasic
+    const text = String(fields.text || fields.message || "Please find attached the Timesheet for the aferent month.").trim();
+    const htmlIncoming = String(fields.html || "").trim();
+    const html =
+      htmlIncoming ||
+      `
+      <div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5">
+        <p>${escapeHtml(text)}</p>
+        <p>Best regards,<br/>WindPro Timesheet</p>
+      </div>
+    `;
 
-    if (!uploaded) {
+    // ✅ Acceptă file1 + file2 (nou), cu fallback pe file (vechi)
+    const up1 = pickOne((files as any).file1) || pickOne((files as any).file);
+    const up2 = pickOne((files as any).file2);
+
+    if (!up1) {
       return json(res, 400, {
         ok: false,
-        error: "Missing file. The form-data must include a PDF under field name 'file'.",
+        error: "Missing file1 (Timesheet PDF). Send form-data with 'file1' (and optional 'file2').",
         debug: { fileKeys: Object.keys(files || {}) },
       });
     }
 
-    const filepath = uploaded?.filepath || uploaded?.path; // formidable v2/v3
-    const originalFilename = uploaded?.originalFilename || uploaded?.name || "timesheet.pdf";
+    const f1 = getFileInfo(up1);
+    const f2 = getFileInfo(up2);
 
-    if (!filepath) {
-      return json(res, 400, {
-        ok: false,
-        error: "File path missing (upload failed).",
-        debug: { uploadedKeys: Object.keys(uploaded || {}) },
-      });
+    if (!f1?.filepath) {
+      return json(res, 400, { ok: false, error: "file1 path missing (upload failed)." });
     }
 
-    const pdfBuffer = fs.readFileSync(filepath);
+    const buf1 = fs.readFileSync(f1.filepath);
+    if (!buf1 || buf1.length < 1000) {
+      return json(res, 400, { ok: false, error: "Timesheet PDF (file1) seems empty / too small." });
+    }
 
-    // ✅ sanity check: pdf minim
-    if (!pdfBuffer || pdfBuffer.length < 1000) {
-      return json(res, 400, { ok: false, error: "PDF seems empty / too small." });
+    let buf2: Buffer | null = null;
+    if (f2?.filepath) {
+      buf2 = fs.readFileSync(f2.filepath);
+      // accept și dacă e mic, dar totuși valid
+      if (!buf2 || buf2.length < 500) buf2 = null;
     }
 
     const transporter = nodemailer.createTransport({
       host,
       port,
-      secure: port === 465, // ✅ 465 => secure true, 587 => false
+      secure: port === 465,
       auth: { user, pass },
     });
 
-    // ✅ loguri utile în Vercel → Deployments → Logs
+    const attachments: any[] = [
+      {
+        filename: f1.originalFilename || "timesheet.pdf",
+        content: buf1,
+        contentType: "application/pdf",
+      },
+    ];
+
+    if (buf2) {
+      attachments.push({
+        filename: f2?.originalFilename || "expenses.pdf",
+        content: buf2,
+        contentType: "application/pdf",
+      });
+    }
+
     console.log("SEND-TIMESHEET:", {
       to,
       from,
@@ -107,31 +156,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       smtpPort: port,
       smtpUser: user,
       subject,
-      filename: originalFilename,
-      bytes: pdfBuffer.length,
+      fileKeys: Object.keys(files || {}),
+      file1: { name: f1.originalFilename, bytes: buf1.length },
+      file2: buf2 ? { name: f2?.originalFilename, bytes: buf2.length } : null,
     });
-
-    const html = `
-      <div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5">
-        <p>${escapeHtml(message)}</p>
-        <p>Best regards,<br/>WindPro Timesheet</p>
-      </div>
-    `;
 
     const info = await transporter.sendMail({
       from,
       to,
       subject,
-      text: message,
+      text,
       html,
-      replyTo: user, // ✅ ajută la deliverability
-      attachments: [
-        {
-          filename: originalFilename,
-          content: pdfBuffer,
-          contentType: "application/pdf",
-        },
-      ],
+      replyTo: user,
+      attachments,
     });
 
     console.log("SMTP RESULT:", {
@@ -141,20 +178,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       messageId: info.messageId,
     });
 
-    return json(res, 200, { ok: true, id: info.messageId || null, accepted: info.accepted, rejected: info.rejected });
+    return json(res, 200, {
+      ok: true,
+      id: info.messageId || null,
+      accepted: info.accepted,
+      rejected: info.rejected,
+      sentAttachments: attachments.map((a) => a.filename),
+    });
   } catch (err: any) {
     console.error("SEND-TIMESHEET ERROR:", err);
     return json(res, 500, { ok: false, error: err?.message || "Server error" });
   }
-}
-
-// mic helper ca să nu bagi HTML inject în email
-function escapeHtml(input: string) {
-  return input
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;")
-    .replaceAll("\n", "<br/>");
 }
