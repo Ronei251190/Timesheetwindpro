@@ -1113,35 +1113,47 @@ function TimesheetApp({ state, setState }: { state: AppState; setState: React.Di
   };
 
   /** ===================== PDF builders ===================== */
-  const buildPdfForPeriod = async (scale = 2, quality = 0.88) => {
-    const pdf = new jsPDF("p", "pt", "a4");
-    for (let i = 0; i < periodEntryPages.length; i++) {
-      const root = document.getElementById(`pdf-root-${i}`);
-      if (!root) throw new Error(`PDF template missing (#pdf-root-${i}).`);
+const buildPdfForPeriod = async (scale = 2, quality = 0.92) => {
+  const pdf = new jsPDF("p", "pt", "a4");
 
-      await new Promise((r) => setTimeout(r, 40));
+  for (let i = 0; i < periodEntryPages.length; i++) {
+    const root = document.getElementById(`pdf-root-${i}`);
+    if (!root) throw new Error("PDF root missing");
 
-      const canvas = await html2canvas(root, {
-        scale,
-        backgroundColor: "#ffffff",
-        useCORS: true,
-        logging: false,
-      });
+    await new Promise((r) => setTimeout(r, 40));
 
-      const imgData = canvas.toDataURL("image/png"); // ✅ mai sharp decât JPEG
+    const canvas = await html2canvas(root, {
+      scale,
+      backgroundColor: "#ffffff",
+      useCORS: true,
+      logging: false,
+    });
 
+    // ✅ AICI ESTE CHEIA
+    const imgData = canvas.toDataURL("image/jpeg", quality);
 
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
 
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+    const imgWidth = pageWidth;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
-      if (i > 0) pdf.addPage();
-      pdf.addImage(imgData, "PNG", 0, 0, imgWidth, Math.min(imgHeight, pageHeight), undefined, "FAST");
-    }
-    return pdf;
-  };
+    if (i > 0) pdf.addPage();
+
+    pdf.addImage(
+      imgData,
+      "JPEG",
+      0,
+      0,
+      imgWidth,
+      Math.min(imgHeight, pageHeight),
+      undefined,
+      "FAST"
+    );
+  }
+
+  return pdf;
+};
 
   const buildExpensesPdf = async (): Promise<jsPDF | null> => {
     const items = periodEntries.flatMap((day) =>
@@ -1252,7 +1264,7 @@ function TimesheetApp({ state, setState }: { state: AppState; setState: React.Di
 
     try {
       // PDF 1 – Timesheet
-      const pdf1 = await buildPdfForPeriod(3, 1.0); // ✅ claritate mare
+      const pdf1 = await buildPdfForPeriod(3, 0.92); // ✅ claritate mare
 
       const blob1 = pdf1.output("blob");
 
