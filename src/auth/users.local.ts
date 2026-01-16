@@ -36,6 +36,7 @@ export const USERS: Record<string, string> = {
   "mimik@windpro.pl": "WINDPRO-1030", // Maciej Mikolajek
   "kokul@windpro.pl": "WINDPRO-1031", // Konrad Kulig
   "mirad@windpro.pl": "WINDPRO-1032", // Michal Radosz
+  "borot@windpro.pl": "WINDPRO-1033", // Rotariu Bogdan
 
   // === EXTERN / PRIVATE EMAILS ===
   "jasont071173@gmail.com": "WINDPRO-2001",
