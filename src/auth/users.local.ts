@@ -82,12 +82,6 @@ export const USERS: Record<string, string> = {
   "pamag@magawind.com": "WINDPRO-2042",
   "m.jablonski010@gmail.com": "WINDPRO-2043",
 
- // === OWNER (ADMIN) ===
-"th@windpro.pl": "WINDPRO-ADMIN",              // Tomasz Hynda (Owner/Admin)
-
-  // === EMPLOYEE ===
-  "bogdan.bitzy@yahoo.com": "WINDPRO-2044",   // Bogdan Rotariu (employee)
-};
-
+ 
 // ❌ NU folosim restricție de domeniu (permit și Gmail / WP / O2)
 export const ALLOWED_DOMAIN = "";
