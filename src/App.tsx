@@ -1325,6 +1325,16 @@ ${trim1(activeUser.name)}`;
         ...p,
         submitLogs: (p.submitLogs || []).map((x) => (x.id === baseLog.id ? { ...x, status: "email_sent" } : x)),
       }));
+await fetch(`${API_BASE}/api/timesheet-create`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    employeeEmail: loginEmail,
+    employeeName: state.users[loginEmail]?.name || "",
+    period: `${startLabel}-${endLabel}`,
+    totalHours: computedTotalHours,
+  }),
+});
 
       lockPeriod();
       setSubmitMsg(`✅ Submitted + emailed + locked. Id: ${data?.id || "n/a"}`);
