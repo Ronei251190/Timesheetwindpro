@@ -1,6 +1,8 @@
+export const runtime = "nodejs";
+
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { kv } from "@vercel/kv";
 import nodemailer from "nodemailer";
+import { getRedis } from "./_redis";
 
 function json(res: VercelResponse, status: number, data: any) {
   res.status(status).setHeader("Content-Type", "application/json");
@@ -8,9 +10,6 @@ function json(res: VercelResponse, status: number, data: any) {
 }
 
 function mailer() {
-  // folosește aceleași ENV ca la send-timesheet
-  // exemplu:
-  // SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
   const port = Number(process.env.SMTP_PORT || 587);
   return nodemailer.createTransport({
     host: process.env.SMTP_HOST,
@@ -21,16 +20,18 @@ function mailer() {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== "POST") return json(res, 405, { ok: false });
+  if (req.method !== "POST") return json(res, 405, { ok: false, error: "Method not allowed" });
 
   try {
+    const redis = getRedis();
+
     const { id, action, adminNote, reviewedBy } = req.body || {};
     if (!id || !["approved", "rejected"].includes(action)) {
-      return json(res, 400, { ok: false, error: "Missing id/action" });
+      return json(res, 400, { ok: false, error: "Missing id/action (approved|rejected)" });
     }
 
     const key = `timesheet:${id}`;
-    const ticket: any = await kv.get(key);
+    const ticket: any = await redis.get(key);
     if (!ticket) return json(res, 404, { ok: false, error: "Not found" });
 
     ticket.status = action;
@@ -38,9 +39,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ticket.reviewedBy = String(reviewedBy || "Admin").trim();
     ticket.adminNote = String(adminNote || "").trim();
 
-    await kv.set(key, ticket);
+    await redis.set(key, ticket);
 
-    // send email to employee
     const to = ticket.employeeEmail;
     const subj =
       action === "approved"
@@ -49,8 +49,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const text =
       action === "approved"
-        ? `Hello ${ticket.employeeName || ""}\n\nYour timesheet for ${ticket.period} has been APPROVED.\n\n${ticket.adminNote ? "Note from admin: " + ticket.adminNote + "\n\n" : ""}Regards,\nWindPro Admin`
-        : `Hello ${ticket.employeeName || ""}\n\nYour timesheet for ${ticket.period} has been REJECTED.\n\n${ticket.adminNote ? "Reason: " + ticket.adminNote + "\n\n" : "Please review and resubmit.\n\n"}Regards,\nWindPro Admin`;
+        ? `Hello ${ticket.employeeName || ""}\n\nYour timesheet for ${ticket.period} has been APPROVED.\n\n${
+            ticket.adminNote ? "Note from admin: " + ticket.adminNote + "\n\n" : ""
+          }Regards,\nWindPro Admin`
+        : `Hello ${ticket.employeeName || ""}\n\nYour timesheet for ${ticket.period} has been REJECTED.\n\n${
+            ticket.adminNote ? "Reason: " + ticket.adminNote + "\n\n" : "Please review and resubmit.\n\n"
+          }Regards,\nWindPro Admin`;
 
     await mailer().sendMail({
       from: process.env.SMTP_FROM || process.env.SMTP_USER,
