@@ -1325,16 +1325,25 @@ ${trim1(activeUser.name)}`;
         ...p,
         submitLogs: (p.submitLogs || []).map((x) => (x.id === baseLog.id ? { ...x, status: "email_sent" } : x)),
       }));
-await fetch(`${API_BASE}/api/timesheet-create`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    employeeEmail: loginEmail,
-    employeeName: state.users[loginEmail]?.name || "",
-    period: `${startLabel}-${endLabel}`,
-    totalHours: computedTotalHours,
-  }),
-});
+// ✅ create ticket for admin approval inbox
+try {
+  await fetch(`${API_BASE}/api/timesheet-create`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      employeeEmail: activeEmail,
+      employeeName: trim1(activeUser.name),
+      period: `${format(parseISO(selectedPeriod.startISO), "dd/MM/yyyy")}-${format(
+        parseISO(selectedPeriod.endISO),
+        "dd/MM/yyyy"
+      )}`,
+      totalHours: baseLog.totalHours,
+    }),
+  });
+} catch (e) {
+  console.warn("timesheet-create failed:", e);
+}
+
 
       lockPeriod();
       setSubmitMsg(`✅ Submitted + emailed + locked. Id: ${data?.id || "n/a"}`);
