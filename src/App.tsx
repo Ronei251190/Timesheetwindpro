@@ -729,7 +729,7 @@ function AdminDashboard({ state, setState }: { state: AppState; setState: React.
   };
 
   const clearAllLogs = () => {
-    const ok = window.confirm("Ștergi toate submit logs? (doar local, în browserul ăsta)");
+    const ok = window.confirm("Delete all submit logs? (local only, in this browser)");
     if (!ok) return;
     setState((p) => ({ ...p, submitLogs: [] }));
   };
@@ -1041,7 +1041,7 @@ function AdminDashboard({ state, setState }: { state: AppState; setState: React.
           </div>
 
           <div style={{ marginTop: 14, fontSize: 12, opacity: 0.75 }}>
-            Dacă vrei centralizat pentru firmă (fără dependență de browser), facem DB separat. Acum e local + Redis tickets.
+            If you want a centralized view for the company (independent of browser), we can set up a separate DB. Currently it's local + Redis tickets.
           </div>
         </div>
       </div>
@@ -1868,7 +1868,7 @@ ${trim1(activeUser.name)}`;
             <div style={{ marginTop: 10, padding: 12, borderRadius: 12, border: "1px solid #eee", background: "#fafafa" }}>
               <div style={{ fontWeight: 800, marginBottom: 6 }}>Default rate (optional)</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: 12, alignItems: "end" }}>
-                <div style={{ opacity: 0.8 }}>Setează o rată default ca să se pre-completeze automat pentru zilele noi.</div>
+                <div style={{ opacity: 0.8 }}>Set a default rate to auto-fill new days.</div>
                 <input value={activeUser.defaultRatePerHour} onChange={(e) => setUserPatch({ defaultRatePerHour: clampNum(e.target.value, 0) })} type="number" min={0} step="0.01" style={{ ...input, padding: 10 }} placeholder="ex: 44" />
               </div>
             </div>
@@ -2174,8 +2174,8 @@ export default function App() {
     const email = normalizeEmail(state.loginEmail);
     const pass = (state.loginPass || "").trim();
 
-    if (!email || !email.includes("@")) return alert("Bagă un email valid.");
-    if (!pass) return alert("Bagă parola.");
+    if (!email || !email.includes("@")) return alert("Please enter a valid email.");
+    if (!pass) return alert("Please enter your password.");
 
     const expectedPassword = (USERS as any)[email];
     if (!expectedPassword) return alert("unregistered email. contact your admin.");
@@ -2196,12 +2196,12 @@ export default function App() {
     const p = trim1(adminPass);
 
     if (!u || !p) {
-      setAdminErr("Completează user + parolă.");
+      setAdminErr("Please enter both username and password.");
       return;
     }
 
     if (u !== ADMIN_USER || p !== ADMIN_PASS) {
-      setAdminErr("Credențiale greșite.");
+      setAdminErr("Incorrect credentials.");
       return;
     }
 
