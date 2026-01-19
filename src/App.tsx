@@ -1,3 +1,4 @@
+// src/App.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { addMonths, endOfMonth, format, getDaysInMonth, parseISO, startOfMonth } from "date-fns";
 import html2canvas from "html2canvas";
@@ -60,7 +61,6 @@ type StoredUser = {
 };
 
 type SubmitStatus = "submitted" | "email_sent" | "failed";
-
 type SubmitLog = {
   id: string;
   userEmail: string;
@@ -68,13 +68,13 @@ type SubmitLog = {
   periodId: string; // YYYY-MM
   periodStartISO: string;
   periodEndISO: string;
-  submittedAtISO: string; // new Date().toISOString()
+  submittedAtISO: string;
   daysCount: number;
   totalHours: number;
   totalPay: number;
   totalExpenses: number;
   status: SubmitStatus;
-  note?: string; // error details
+  note?: string;
 };
 
 type AppState = {
@@ -83,7 +83,7 @@ type AppState = {
   loginEmail: string;
   loginPass: string;
 
-  // admin login
+  // admin
   isAdminLoggedIn: boolean;
 
   // period
@@ -97,10 +97,8 @@ type AppState = {
   multiMode: boolean;
   multiSelectedISOs: string[];
 
-  // users
+  // data
   users: Record<string, StoredUser>;
-
-  // audit
   submitLogs: SubmitLog[];
 };
 
@@ -114,13 +112,15 @@ type Period = {
 
 /** ===================== ENV (ADMIN) ===================== */
 const ADMIN_USER = (import.meta as any).env?.VITE_ADMIN_USER || "ADMIN";
-const ADMIN_PASS = (import.meta as any).env?.VITE_ADMIN_PASS || ""; // must be set in Vercel env
+const ADMIN_PASS = (import.meta as any).env?.VITE_ADMIN_PASS || ""; // set in Vercel
 const ADMIN_EMAILS_ENV = (import.meta as any).env?.VITE_ADMIN_EMAILS || "timesheet@windpro.pl";
-const ADMIN_EMAILS = ADMIN_EMAILS_ENV.split(",").map((x: string) => x.trim().toLowerCase()).filter(Boolean);
+const ADMIN_EMAILS = ADMIN_EMAILS_ENV
+  .split(",")
+  .map((x: string) => x.trim().toLowerCase())
+  .filter(Boolean);
 
 /** ===================== CONSTS ===================== */
-const LS_KEY = "windpro_timesheet_mce_with_admin_portal_v1";
-
+const LS_KEY = "windpro_timesheet_mce_admin_portal_v2";
 
 const WORK_TYPES: WorkType[] = [
   "Offshore (Harbour / CTV) DAY SHIFT",
@@ -237,19 +237,15 @@ const DEFAULT_STATE: AppState = {
 };
 
 function loadState(): AppState {
-  try {
-    const raw = safeParse<AppState>(localStorage.getItem(LS_KEY), DEFAULT_STATE);
-    return {
-      ...DEFAULT_STATE,
-      ...raw,
-      users: raw?.users || {},
-      lockedPeriodIds: raw?.lockedPeriodIds || [],
-      multiSelectedISOs: raw?.multiSelectedISOs || [],
-      submitLogs: raw?.submitLogs || [],
-    };
-  } catch {
-    return DEFAULT_STATE;
-  }
+  const raw = safeParse<AppState>(localStorage.getItem(LS_KEY), DEFAULT_STATE);
+  return {
+    ...DEFAULT_STATE,
+    ...raw,
+    users: raw?.users || {},
+    lockedPeriodIds: raw?.lockedPeriodIds || [],
+    multiSelectedISOs: raw?.multiSelectedISOs || [],
+    submitLogs: raw?.submitLogs || [],
+  };
 }
 function saveState(s: AppState) {
   try {
@@ -319,7 +315,6 @@ const badge = (bg: string, color: string): React.CSSProperties => ({
   fontSize: 12,
 });
 
-/** ===================== PDF STYLES (compact) ===================== */
 const pdfTh: React.CSSProperties = {
   border: "1px solid #e5e5e5",
   padding: "6px 6px",
@@ -473,25 +468,12 @@ function LoginView({
 
         <div style={{ marginTop: 16 }}>
           <div style={lbl}>Email</div>
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={strongInput}
-            placeholder="ex: borot@windpro.pl"
-            autoComplete="email"
-          />
+          <input value={email} onChange={(e) => setEmail(e.target.value)} style={strongInput} placeholder="ex: borot@windpro.pl" autoComplete="email" />
         </div>
 
         <div style={{ marginTop: 16 }}>
           <div style={lbl}>Password</div>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={strongInput}
-            placeholder="••••••••"
-            autoComplete="current-password"
-          />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={strongInput} placeholder="••••••••" autoComplete="current-password" />
         </div>
 
         <button onClick={onUserLogin} style={{ ...btnBlue, width: "100%", marginTop: 14 }}>
@@ -586,17 +568,111 @@ function AdminLoginView({
 }
 
 /** ===================== ADMIN DASHBOARD ===================== */
-function AdminDashboard({
-  state,
-  setState,
-}: {
-  state: AppState;
-  setState: React.Dispatch<React.SetStateAction<AppState>>;
-}) {
+function AdminDashboard({ state, setState }: { state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>> }) {
+  const API_BASE =
+  window.location.hostname === "localhost" ||
+  window.location.hostname === "127.0.0.1"
+    ? "https://windprotimesheet.vercel.app"
+    : "";
+
   const periods = useMemo(() => generateMonthlyPeriods(2025, 2050), []);
   const [periodId, setPeriodId] = useState(state.selectedPeriodId);
   const period = useMemo(() => periods.find((p) => p.id === periodId) || periods[0], [periods, periodId]);
 
+  /** ===== Approval Inbox (Redis via /api/*) ===== */
+  type ApprovalTicket = {
+    id: string;
+    employeeEmail: string;
+    employeeName: string;
+    period: string; // dd/MM/yyyy-dd/MM/yyyy
+    totalHours: number;
+    status: "pending" | "approved" | "rejected";
+    submittedAt: string;
+    reviewedAt: string | null;
+    reviewedBy: string | null;
+    adminNote: string;
+  };
+
+  const [approvalTickets, setApprovalTickets] = useState<ApprovalTicket[]>([]);
+  const [approvalLoading, setApprovalLoading] = useState(false);
+  const [approvalErr, setApprovalErr] = useState("");
+  const [noteById, setNoteById] = useState<Record<string, string>>({});
+  const [busyId, setBusyId] = useState("");
+
+  const selectedPeriodLabel = useMemo(() => {
+    const start = format(parseISO(period.startISO), "dd/MM/yyyy");
+    const end = format(parseISO(period.endISO), "dd/MM/yyyy");
+    return `${start}-${end}`;
+  }, [period.startISO, period.endISO]);
+
+  const filteredTickets = useMemo(() => approvalTickets.filter((t) => t.period === selectedPeriodLabel), [approvalTickets, selectedPeriodLabel]);
+  const pendingCount = useMemo(() => filteredTickets.filter((t) => t.status === "pending").length, [filteredTickets]);
+
+ async function loadApprovalTickets() {
+  try {
+    setApprovalLoading(true);
+    setApprovalErr("");
+
+   const resp = await fetch(`${API_BASE}/api/admin-timesheets-list?limit=200`);
+    const raw = await resp.text();
+
+    let data: any = null;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      throw new Error(raw?.slice(0, 200) || "Non-JSON response");
+    }
+
+    if (!resp.ok || !data?.ok) throw new Error(data?.error || "Failed to load tickets");
+
+    setApprovalTickets(Array.isArray(data.tickets) ? data.tickets : []);
+  } catch (e: any) {
+    setApprovalErr(e?.message || "Failed to load tickets");
+  } finally {
+    setApprovalLoading(false);
+  }
+}
+
+
+ async function reviewTicket(id: string, action: "approved" | "rejected") {
+  try {
+    setBusyId(id);
+
+    const adminNote = (noteById[id] || "").trim();
+    const reviewedBy = "Admin";
+
+  const resp = await fetch(`${API_BASE}/api/admin-timesheet-review`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ id, action, adminNote, reviewedBy }),
+});
+
+    const raw = await resp.text();
+
+    let data: any = null;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      throw new Error(raw?.slice(0, 200) || "Non-JSON response");
+    }
+
+    if (!resp.ok || !data?.ok) throw new Error(data?.error || "Review failed");
+
+    setApprovalTickets((prev) => prev.map((t) => (t.id === id ? data.ticket : t)));
+  } catch (e: any) {
+    alert(e?.message || "Review failed");
+  } finally {
+    setBusyId("");
+  }
+}
+
+
+  useEffect(() => {
+    loadApprovalTickets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodId]);
+
+  /** ===== local logs ===== */
   const logs = useMemo(() => {
     const sorted = [...(state.submitLogs || [])].sort((a, b) => (a.submittedAtISO < b.submittedAtISO ? 1 : -1));
     return sorted;
@@ -605,7 +681,6 @@ function AdminDashboard({
   const logsForPeriod = useMemo(() => logs.filter((l) => l.periodId === periodId), [logs, periodId]);
 
   const knownUsers = useMemo(() => {
-    // “expected users” = cei care au conturi salvate în users (au intrat măcar o dată)
     const entries = Object.entries(state.users || {});
     const out = entries.map(([email, u]) => ({ email, name: trim1(u?.name) || "" }));
     out.sort((a, b) => a.email.localeCompare(b.email));
@@ -666,7 +741,7 @@ function AdminDashboard({
           <img src={windproLogo} alt="WindPro" style={{ width: 70, height: "auto" }} />
           <div>
             <div style={{ fontSize: 24, fontWeight: 900 }}>Admin Portal</div>
-            <div style={{ opacity: 0.7 }}>Submissions • Who is missing • Export</div>
+            <div style={{ opacity: 0.7 }}>Submissions • Who is missing • Approval Inbox</div>
           </div>
         </div>
 
@@ -722,11 +797,154 @@ function AdminDashboard({
           </div>
         </Card>
         <Card title="Submitted (known users)" big={`${submitted.length}`}>
-          <div style={{ opacity: 0.85 }}>{submitted.map((u) => u.email).slice(0, 3).join(", ")}{submitted.length > 3 ? "..." : ""}</div>
+          <div style={{ opacity: 0.85 }}>
+            {submitted.map((u) => u.email).slice(0, 3).join(", ")}
+            {submitted.length > 3 ? "..." : ""}
+          </div>
         </Card>
         <Card title="Missing (known users)" big={`${missing.length}`}>
-          <div style={{ opacity: 0.85 }}>{missing.map((u) => u.email).slice(0, 3).join(", ")}{missing.length > 3 ? "..." : ""}</div>
+          <div style={{ opacity: 0.85 }}>
+            {missing.map((u) => u.email).slice(0, 3).join(", ")}
+            {missing.length > 3 ? "..." : ""}
+          </div>
         </Card>
+      </div>
+
+      {/* ✅ APPROVAL INBOX: SEPARAT, SUS */}
+      <div style={{ marginTop: 16, borderRadius: 14, border: "1px solid #eee", padding: 16, background: "white" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 4 }}>Timesheets Approval Inbox</div>
+            <div style={{ opacity: 0.75 }}>
+              Period: {selectedPeriodLabel} • Pending: {pendingCount}
+            </div>
+            {approvalErr ? <div style={{ color: "#b91c1c", marginTop: 8 }}>{approvalErr}</div> : null}
+          </div>
+
+          <button
+            onClick={loadApprovalTickets}
+            disabled={approvalLoading}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid #eee",
+              background: "white",
+              cursor: approvalLoading ? "not-allowed" : "pointer",
+              fontWeight: 700,
+            }}
+          >
+            {approvalLoading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
+
+        <div style={{ overflowX: "auto", marginTop: 12 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "Arial, Helvetica, sans-serif" }}>
+            <thead>
+              <tr>
+                <th style={{ ...pdfTh, fontSize: 12 }}>Employee</th>
+                <th style={{ ...pdfTh, fontSize: 12 }}>Period</th>
+                <th style={{ ...pdfTh, fontSize: 12 }}>Hours</th>
+                <th style={{ ...pdfTh, fontSize: 12 }}>Status</th>
+                <th style={{ ...pdfTh, fontSize: 12 }}>Admin note</th>
+                <th style={{ ...pdfTh, fontSize: 12 }}>Actions</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {filteredTickets.length === 0 ? (
+                <tr>
+                  <td style={pdfTd} colSpan={6}>
+                    No tickets found for this period.
+                  </td>
+                </tr>
+              ) : (
+                filteredTickets.map((t) => {
+                  const isBusy = busyId === t.id;
+                  const isPending = t.status === "pending";
+                  return (
+                    <tr key={t.id}>
+                      <td style={pdfTd}>
+                        <div style={{ fontWeight: 800 }}>{t.employeeEmail}</div>
+                        <div style={{ opacity: 0.75, fontSize: 12 }}>{t.employeeName || "-"}</div>
+                      </td>
+
+                      <td style={pdfTd}>{t.period}</td>
+                      <td style={pdfTd}>{Number(t.totalHours || 0)}</td>
+
+                      <td style={pdfTd}>
+                        <span
+                          style={{
+                            display: "inline-block",
+                            padding: "4px 10px",
+                            borderRadius: 999,
+                            fontWeight: 900,
+                            fontSize: 12,
+                            border: "1px solid #eee",
+                            background: t.status === "approved" ? "#ecfdf5" : t.status === "rejected" ? "#fef2f2" : "#fff7ed",
+                          }}
+                        >
+                          {t.status.toUpperCase()}
+                        </span>
+                      </td>
+
+                      <td style={pdfTd}>
+                        <input
+                          value={noteById[t.id] ?? t.adminNote ?? ""}
+                          onChange={(e) => setNoteById((p) => ({ ...p, [t.id]: e.target.value }))}
+                          placeholder={t.status === "rejected" ? "Reason for reject..." : "Optional note..."}
+                          style={{ width: 280, maxWidth: "100%", padding: "8px 10px", borderRadius: 10, border: "1px solid #eee" }}
+                          disabled={isBusy}
+                        />
+                      </td>
+
+                      <td style={pdfTd}>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button
+                            onClick={() => reviewTicket(t.id, "approved")}
+                            disabled={!isPending || isBusy}
+                            style={{
+                              padding: "8px 10px",
+                              borderRadius: 10,
+                              border: "1px solid #16a34a",
+                              background: isPending ? "#16a34a" : "#e5e7eb",
+                              color: "white",
+                              cursor: !isPending || isBusy ? "not-allowed" : "pointer",
+                              fontWeight: 900,
+                            }}
+                          >
+                            {isBusy ? "..." : "Approve"}
+                          </button>
+
+                          <button
+                            onClick={() => reviewTicket(t.id, "rejected")}
+                            disabled={!isPending || isBusy}
+                            style={{
+                              padding: "8px 10px",
+                              borderRadius: 10,
+                              border: "1px solid #dc2626",
+                              background: isPending ? "#dc2626" : "#e5e7eb",
+                              color: "white",
+                              cursor: !isPending || isBusy ? "not-allowed" : "pointer",
+                              fontWeight: 900,
+                            }}
+                          >
+                            {isBusy ? "..." : "Reject"}
+                          </button>
+                        </div>
+
+                        {t.reviewedAt ? (
+                          <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+                            Reviewed: {t.reviewedBy || "-"} • {new Date(t.reviewedAt).toLocaleString()}
+                          </div>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 16, marginTop: 16 }}>
@@ -791,7 +1009,9 @@ function AdminDashboard({
 
           <div style={{ padding: 12, borderRadius: 12, border: "1px solid #eee", background: "#fafafa" }}>
             <div style={{ fontWeight: 900 }}>Period:</div>
-            <div style={{ opacity: 0.85 }}>{period.startISO} → {period.endISO}</div>
+            <div style={{ opacity: 0.85 }}>
+              {period.startISO} → {period.endISO}
+            </div>
           </div>
 
           <div style={{ marginTop: 12 }}>
@@ -821,7 +1041,7 @@ function AdminDashboard({
           </div>
 
           <div style={{ marginTop: 14, fontSize: 12, opacity: 0.75 }}>
-            Dacă vrei centralizat pentru firmă (fără dependență de browser), îți fac Firestore/Google Sheet în 10-15 linii de API + dashboard.
+            Dacă vrei centralizat pentru firmă (fără dependență de browser), facem DB separat. Acum e local + Redis tickets.
           </div>
         </div>
       </div>
@@ -832,19 +1052,14 @@ function AdminDashboard({
 /** ===================== MAIN USER APP ===================== */
 function TimesheetApp({ state, setState }: { state: AppState; setState: React.Dispatch<React.SetStateAction<AppState>> }) {
   const periods = useMemo(() => generateMonthlyPeriods(2025, 2050), []);
-  const selectedPeriod = useMemo(
-    () => periods.find((p) => p.id === state.selectedPeriodId) || periods[0],
-    [periods, state.selectedPeriodId]
-  );
+  const selectedPeriod = useMemo(() => periods.find((p) => p.id === state.selectedPeriodId) || periods[0], [periods, state.selectedPeriodId]);
 
   const activeEmail = useMemo(() => normalizeEmail(state.loginEmail), [state.loginEmail]);
   const emailIsCompanyAdmin = useMemo(() => (activeEmail ? ADMIN_EMAILS.includes(activeEmail) : false), [activeEmail]);
 
   useEffect(() => {
     if (!activeEmail) return;
-    setState((prev) =>
-      prev.users[activeEmail] ? prev : { ...prev, users: { ...prev.users, [activeEmail]: makeDefaultUser() } }
-    );
+    setState((prev) => (prev.users[activeEmail] ? prev : { ...prev, users: { ...prev.users, [activeEmail]: makeDefaultUser() } }));
   }, [activeEmail, setState]);
 
   const activeUser = useMemo<StoredUser>(() => {
@@ -881,10 +1096,7 @@ function TimesheetApp({ state, setState }: { state: AppState; setState: React.Di
       const u = prev.users[activeEmail] || makeDefaultUser();
       const existing = u.entries[prev.selectedDateISO] || makeDefaultEntry(prev.selectedDateISO, u.defaultRatePerHour);
       const nextEntry: DayEntry = { ...existing, ...patch, dateISO: prev.selectedDateISO };
-      return {
-        ...prev,
-        users: { ...prev.users, [activeEmail]: { ...u, entries: { ...u.entries, [prev.selectedDateISO]: nextEntry } } },
-      };
+      return { ...prev, users: { ...prev.users, [activeEmail]: { ...u, entries: { ...u.entries, [prev.selectedDateISO]: nextEntry } } } };
     });
   };
 
@@ -923,7 +1135,12 @@ function TimesheetApp({ state, setState }: { state: AppState; setState: React.Di
     const hours = periodEntries.reduce((acc, e) => acc + clampNum(e.hours, 0), 0);
     const expenses = periodEntries.reduce((acc, e) => acc + (e.expenses || []).reduce((a, x) => a + clampNum(x.amount, 0), 0), 0);
     const pay = periodEntries.reduce((acc, e) => acc + clampNum(e.hours, 0) * clampNum(e.ratePerHour, 0), 0);
-    return { hours: round2(hours), expenses: round2(expenses), pay: round2(pay), defaultRate: round2(clampNum(activeUser.defaultRatePerHour, 0)) };
+    return {
+      hours: round2(hours),
+      expenses: round2(expenses),
+      pay: round2(pay),
+      defaultRate: round2(clampNum(activeUser.defaultRatePerHour, 0)),
+    };
   }, [periodEntries, activeUser.defaultRatePerHour]);
 
   /** Multi-select */
@@ -946,9 +1163,7 @@ function TimesheetApp({ state, setState }: { state: AppState; setState: React.Di
   };
   const updateExpense = (id: string, patch: Partial<Expense>) => {
     if (!activeEmail || isLocked) return;
-    const next = (currentEntry.expenses || []).map((e) =>
-      e.id === id ? { ...e, ...patch, amount: patch.amount !== undefined ? clampNum(patch.amount, 0) : e.amount } : e
-    );
+    const next = (currentEntry.expenses || []).map((e) => (e.id === id ? { ...e, ...patch, amount: patch.amount !== undefined ? clampNum(patch.amount, 0) : e.amount } : e));
     setEntry({ expenses: next });
   };
   const removeExpense = (id: string) => {
@@ -1031,16 +1246,14 @@ function TimesheetApp({ state, setState }: { state: AppState; setState: React.Di
   const lockPeriod = () =>
     setState((p) => (p.lockedPeriodIds.includes(selectedPeriod.id) ? p : { ...p, lockedPeriodIds: [...p.lockedPeriodIds, selectedPeriod.id] }));
 
-  // IMPORTANT: unlock by Admin Portal only (not user)
   const unlockAdminLocal = () => {
-    // allow only if email is in admin emails (extra safety)
     if (!emailIsCompanyAdmin) return alert("Not allowed.");
     const pass = window.prompt("Admin password (portal):");
     if (!pass || pass !== ADMIN_PASS) return alert("Wrong password.");
     setState((p) => ({ ...p, lockedPeriodIds: p.lockedPeriodIds.filter((id) => id !== selectedPeriod.id) }));
   };
 
-  /** Copy modals */
+  /** Submit menus */
   const [submitMenuOpen, setSubmitMenuOpen] = useState(false);
   const [copyMyDayOpen, setCopyMyDayOpen] = useState(false);
   const [copyColleagueOpen, setCopyColleagueOpen] = useState(false);
@@ -1109,48 +1322,31 @@ function TimesheetApp({ state, setState }: { state: AppState; setState: React.Di
     setCopyColleagueOpen(false);
   };
 
-  /** ===================== PDF builders ===================== */
-const buildPdfForPeriod = async (scale = 2, quality = 0.92) => {
-  const pdf = new jsPDF("p", "pt", "a4");
+  /** ===== PDF builders ===== */
+  const buildPdfForPeriod = async (scale = 2, quality = 0.92) => {
+    const pdf = new jsPDF("p", "pt", "a4");
 
-  for (let i = 0; i < periodEntryPages.length; i++) {
-    const root = document.getElementById(`pdf-root-${i}`);
-    if (!root) throw new Error("PDF root missing");
+    for (let i = 0; i < periodEntryPages.length; i++) {
+      const root = document.getElementById(`pdf-root-${i}`);
+      if (!root) throw new Error("PDF root missing");
 
-    await new Promise((r) => setTimeout(r, 40));
+      await new Promise((r) => setTimeout(r, 40));
 
-    const canvas = await html2canvas(root, {
-      scale,
-      backgroundColor: "#ffffff",
-      useCORS: true,
-      logging: false,
-    });
+      const canvas = await html2canvas(root, { scale, backgroundColor: "#ffffff", useCORS: true, logging: false });
+      const imgData = canvas.toDataURL("image/jpeg", quality);
 
-    // ✅ AICI ESTE CHEIA
-    const imgData = canvas.toDataURL("image/jpeg", quality);
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
 
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = pageWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
-    const imgWidth = pageWidth;
-    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      if (i > 0) pdf.addPage();
+      pdf.addImage(imgData, "JPEG", 0, 0, imgWidth, Math.min(imgHeight, pageHeight), undefined, "FAST");
+    }
 
-    if (i > 0) pdf.addPage();
-
-    pdf.addImage(
-      imgData,
-      "JPEG",
-      0,
-      0,
-      imgWidth,
-      Math.min(imgHeight, pageHeight),
-      undefined,
-      "FAST"
-    );
-  }
-
-  return pdf;
-};
+    return pdf;
+  };
 
   const buildExpensesPdf = async (): Promise<jsPDF | null> => {
     const items = periodEntries.flatMap((day) =>
@@ -1231,7 +1427,7 @@ const buildPdfForPeriod = async (scale = 2, quality = 0.92) => {
     }
   };
 
-  /** ===================== SUBMIT (2 PDFs) + AUDIT LOG ===================== */
+  /** ===== SUBMIT + ticket create ===== */
   const submitEmailAndLock = async () => {
     if (!activeEmail) return alert("Login first.");
     if (!trim1(activeUser.name)) return alert("Add your name.");
@@ -1241,7 +1437,6 @@ const buildPdfForPeriod = async (scale = 2, quality = 0.92) => {
     setSubmitBusy(true);
     setSubmitMsg("");
 
-    // create audit log entry first
     const baseLog: SubmitLog = {
       id: uid("submit"),
       userEmail: activeEmail,
@@ -1260,20 +1455,14 @@ const buildPdfForPeriod = async (scale = 2, quality = 0.92) => {
     setState((p) => ({ ...p, submitLogs: [baseLog, ...(p.submitLogs || [])] }));
 
     try {
-      // PDF 1 – Timesheet
-      const pdf1 = await buildPdfForPeriod(3, 0.92); // ✅ claritate mare
-
+      const pdf1 = await buildPdfForPeriod(3, 0.92);
       const blob1 = pdf1.output("blob");
 
-      // PDF 2 – Expenses attachments
       const pdf2 = await buildExpensesPdf();
       const blob2 = pdf2 ? pdf2.output("blob") : null;
 
       const to = "timesheet@windpro.pl";
-      const subject = `WindPro Timesheet MCE ${format(parseISO(selectedPeriod.startISO), "dd/MM/yyyy")}-${format(
-        parseISO(selectedPeriod.endISO),
-        "dd/MM/yyyy"
-      )}`;
+      const subject = `WindPro Timesheet MCE ${format(parseISO(selectedPeriod.startISO), "dd/MM/yyyy")}-${format(parseISO(selectedPeriod.endISO), "dd/MM/yyyy")}`;
 
       const messageText = `Hello,
 
@@ -1283,17 +1472,17 @@ Kind regards,
 ${trim1(activeUser.name)}`;
 
       const messageHtml = `
-        <div style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #111;">
-          <p>Hello,</p>
-          <p>Please find attached the timesheet for the selected period${blob2 ? " (including Expenses Attachments PDF)." : "."}</p>
-          <p>Kind regards,<br/><b>${trim1(activeUser.name)}</b></p>
-        </div>
-      `;
+<div style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #111;">
+  <p>Hello,</p>
+  <p>Please find attached the timesheet for the selected period${blob2 ? " (including Expenses Attachments PDF)." : "."}</p>
+  <p>Kind regards,<br/><b>${trim1(activeUser.name)}</b></p>
+</div>`;
 
       const safeName = trim1(activeUser.name).replace(/\s+/g, "_") || "User";
       const filename1 = `Timesheet_${selectedPeriod.id}_${safeName}.pdf`;
       const filename2 = `Expenses_${selectedPeriod.id}_${safeName}.pdf`;
 
+      // local -> send to deployed API
       const API_BASE = window.location.hostname === "localhost" ? "https://windprotimesheet.vercel.app" : "";
 
       const form = new FormData();
@@ -1301,7 +1490,6 @@ ${trim1(activeUser.name)}`;
       form.append("subject", subject);
       form.append("text", messageText);
       form.append("html", messageHtml);
-
       form.append("file1", blob1, filename1);
       if (blob2) form.append("file2", blob2, filename2);
 
@@ -1320,49 +1508,43 @@ ${trim1(activeUser.name)}`;
         throw new Error(`${data?.error || "Send failed"} (${resp.status}) ${details}`);
       }
 
-      // mark log as email_sent
       setState((p) => ({
         ...p,
         submitLogs: (p.submitLogs || []).map((x) => (x.id === baseLog.id ? { ...x, status: "email_sent" } : x)),
       }));
-// ✅ create ticket for admin approval inbox
-try {
-  await fetch(`${API_BASE}/api/timesheet-create`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      employeeEmail: activeEmail,
-      employeeName: trim1(activeUser.name),
-      period: `${format(parseISO(selectedPeriod.startISO), "dd/MM/yyyy")}-${format(
-        parseISO(selectedPeriod.endISO),
-        "dd/MM/yyyy"
-      )}`,
-      totalHours: baseLog.totalHours,
-    }),
-  });
-} catch (e) {
-  console.warn("timesheet-create failed:", e);
-}
 
+      // create ticket for admin approval inbox
+      try {
+        await fetch(`${API_BASE}/api/timesheet-create`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            employeeEmail: activeEmail,
+            employeeName: trim1(activeUser.name),
+            period: `${format(parseISO(selectedPeriod.startISO), "dd/MM/yyyy")}-${format(parseISO(selectedPeriod.endISO), "dd/MM/yyyy")}`,
+            totalHours: baseLog.totalHours,
+          }),
+        });
+      } catch (e) {
+        console.warn("timesheet-create failed:", e);
+      }
 
       lockPeriod();
       setSubmitMsg(`✅ Submitted + emailed + locked. Id: ${data?.id || "n/a"}`);
       setSubmitMenuOpen(false);
     } catch (err: any) {
       console.error(err);
-
       setState((p) => ({
         ...p,
         submitLogs: (p.submitLogs || []).map((x) => (x.id === baseLog.id ? { ...x, status: "failed", note: String(err?.message || err) } : x)),
       }));
-
       setSubmitMsg(`❌ Submit failed: ${err?.message || "unknown error"}`);
     } finally {
       setSubmitBusy(false);
     }
   };
 
-  /** ===================== derived ===================== */
+  /** derived */
   const generatedStr = useMemo(() => format(new Date(), "dd/MM/yyyy, HH:mm"), [selectedPeriod.id]);
   const dayExpenseSum = useMemo(() => round2((currentEntry.expenses || []).reduce((a, x) => a + clampNum(x.amount, 0), 0)), [currentEntry.expenses]);
   const dayPay = useMemo(() => round2(clampNum(currentEntry.hours, 0) * clampNum(currentEntry.ratePerHour, 0)), [currentEntry.hours, currentEntry.ratePerHour]);
@@ -1405,12 +1587,7 @@ try {
 
           <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", alignItems: "center", gap: 10 }}>
             <div style={{ opacity: 0.8 }}>Name:</div>
-            <input
-              value={activeUser.name}
-              onChange={(e) => setUserPatch({ name: e.target.value })}
-              placeholder="ex: Bogdan Rotariu"
-              style={strongInput}
-            />
+            <input value={activeUser.name} onChange={(e) => setUserPatch({ name: e.target.value })} placeholder="ex: Bogdan Rotariu" style={strongInput} />
           </div>
 
           <div style={{ fontSize: 12, opacity: 0.7 }}>
@@ -1463,11 +1640,7 @@ try {
                   zIndex: 9999,
                 }}
               >
-                <button
-                  style={{ ...smallBtn, width: "100%", border: "none", borderRadius: 0, textAlign: "left" }}
-                  disabled={isLocked || submitBusy}
-                  onClick={submitEmailAndLock}
-                >
+                <button style={{ ...smallBtn, width: "100%", border: "none", borderRadius: 0, textAlign: "left" }} disabled={isLocked || submitBusy} onClick={submitEmailAndLock}>
                   Submit (email + lock) — 2 PDFs
                 </button>
 
@@ -1498,7 +1671,6 @@ try {
             )}
           </div>
 
-          {/* Unlock (optional local) */}
           <button onClick={unlockAdminLocal} style={{ ...smallBtn, borderColor: "#f0bcbc", color: "#b55" }} title="Works only if your email is in VITE_ADMIN_EMAILS + correct admin password">
             Unlock (Admin)
           </button>
@@ -1534,11 +1706,7 @@ try {
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
             <label style={{ display: "flex", gap: 10, alignItems: "center", fontWeight: 800 }}>
-              <input
-                type="checkbox"
-                checked={state.multiMode}
-                onChange={(e) => setState((p) => ({ ...p, multiMode: e.target.checked, multiSelectedISOs: [] }))}
-              />
+              <input type="checkbox" checked={state.multiMode} onChange={(e) => setState((p) => ({ ...p, multiMode: e.target.checked, multiSelectedISOs: [] }))} />
               Multi-select days
             </label>
 
@@ -1806,7 +1974,7 @@ try {
         </div>
       </div>
 
-      {/* COPY MY DAY MODAL */}
+      {/* COPY MODALS */}
       <Modal open={copyMyDayOpen} title="Copy my day (multi-select)" onClose={() => setCopyMyDayOpen(false)}>
         <div style={{ display: "grid", gap: 12 }}>
           <div style={{ opacity: 0.85 }}>
@@ -1823,7 +1991,6 @@ try {
         </div>
       </Modal>
 
-      {/* COPY COLLEAGUE MODAL */}
       <Modal open={copyColleagueOpen} title="Copy my colleague (code)" onClose={() => setCopyColleagueOpen(false)}>
         <div style={{ display: "grid", gap: 12 }}>
           <div style={{ opacity: 0.85 }}>1) Generate code from your selected day OR paste code from colleague. 2) Apply to selected days.</div>
@@ -1842,7 +2009,7 @@ try {
         </div>
       </Modal>
 
-      {/* ===================== PDF TEMPLATE (HIDDEN) ===================== */}
+      {/* PDF TEMPLATE (HIDDEN) */}
       <div style={{ position: "absolute", left: -99999, top: 0, width: 794 }}>
         {periodEntryPages.map((pageEntries, pageIndex) => (
           <div
@@ -1998,25 +2165,24 @@ export default function App() {
   const [state, setState] = useState<AppState>(() => loadState());
   useEffect(() => saveState(state), [state]);
 
-  // UI state for admin login view
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [adminUser, setAdminUser] = useState("");
   const [adminPass, setAdminPass] = useState("");
   const [adminErr, setAdminErr] = useState("");
 
- const doUserLogin = () => {
-  const email = normalizeEmail(state.loginEmail);
-  const pass = (state.loginPass || "").trim();
+  const doUserLogin = () => {
+    const email = normalizeEmail(state.loginEmail);
+    const pass = (state.loginPass || "").trim();
 
-  if (!email || !email.includes("@")) return alert("Bagă un email valid.");
-  if (!pass) return alert("Bagă parola.");
+    if (!email || !email.includes("@")) return alert("Bagă un email valid.");
+    if (!pass) return alert("Bagă parola.");
 
-  const expectedPassword = USERS[email];
-  if (!expectedPassword) return alert("unregistered email. contact your admin.");
-  if (pass !== expectedPassword) return alert("wrong password.");
+    const expectedPassword = (USERS as any)[email];
+    if (!expectedPassword) return alert("unregistered email. contact your admin.");
+    if (pass !== expectedPassword) return alert("wrong password.");
 
-  setState((p) => ({ ...p, loginEmail: email, loginPass: "", isUserLoggedIn: true }));
-};
+    setState((p) => ({ ...p, loginEmail: email, loginPass: "", isUserLoggedIn: true }));
+  };
 
   const doAdminLogin = () => {
     setAdminErr("");
@@ -2044,7 +2210,6 @@ export default function App() {
     setAdminPass("");
   };
 
-  // ADMIN PORTAL takes priority
   if (state.isAdminLoggedIn) {
     return (
       <ErrorBoundary>
@@ -2053,7 +2218,6 @@ export default function App() {
     );
   }
 
-  // ADMIN LOGIN SCREEN
   if (showAdminLogin) {
     return (
       <ErrorBoundary>
@@ -2075,7 +2239,6 @@ export default function App() {
     );
   }
 
-  // USER LOGIN SCREEN
   if (!state.isUserLoggedIn) {
     return (
       <ErrorBoundary>
@@ -2091,7 +2254,6 @@ export default function App() {
     );
   }
 
-  // USER APP
   return (
     <ErrorBoundary>
       <TimesheetApp state={state} setState={setState} />
