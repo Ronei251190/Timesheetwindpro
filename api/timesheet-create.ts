@@ -1,45 +1,51 @@
-export const runtime = "nodejs";
-
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getRedis } from "./_redis";
+import { kv } from "@vercel/kv";
+
+export const runtime = "nodejs";
 
 function json(res: VercelResponse, status: number, data: any) {
   res.status(status).setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(data));
 }
 
+function uid(prefix = "t") {
+  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== "POST") return json(res, 405, { ok: false, error: "Method not allowed" });
-
   try {
-    const redis = getRedis();
+    if (req.method !== "POST") return json(res, 405, { ok: false, error: "Method not allowed" });
 
-    const { employeeEmail, employeeName, period, totalHours } = req.body || {};
+    const { employeeEmail, employeeName, period, totalHours } = (req.body || {}) as any;
+
     if (!employeeEmail || !period) {
       return json(res, 400, { ok: false, error: "Missing employeeEmail/period" });
     }
 
-    const id = `ts_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-
     const ticket = {
-      id,
+      id: uid("ticket"),
       employeeEmail: String(employeeEmail).toLowerCase().trim(),
       employeeName: String(employeeName || "").trim(),
-      period: String(period).trim(),
+      period: String(period).trim(), // "dd/MM/yyyy-dd/MM/yyyy"
       totalHours: Number(totalHours || 0),
-      status: "pending", // pending | approved | rejected
+      status: "pending" as const,
       submittedAt: new Date().toISOString(),
       reviewedAt: null as string | null,
       reviewedBy: null as string | null,
       adminNote: "",
     };
 
-    await redis.set(`timesheet:${id}`, ticket);
-    // index list (newest first)
-    await redis.lpush("timesheets:index", id);
+    // Store ticket
+    await kv.set(`ticket:${ticket.id}`, ticket);
 
-    return json(res, 200, { ok: true, id });
+    // Add to index (sorted set by submittedAt)
+    // score = timestamp for ordering
+    const score = Date.now();
+    await kv.zadd("tickets:index", { score, member: ticket.id });
+
+    return json(res, 200, { ok: true, ticket });
   } catch (e: any) {
-    return json(res, 500, { ok: false, error: e?.message || "Server error" });
+    console.error("timesheet-create error:", e);
+    return json(res, 500, { ok: false, error: "Server error", details: String(e?.message || e) });
   }
 }

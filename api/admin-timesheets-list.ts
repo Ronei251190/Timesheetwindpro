@@ -1,7 +1,7 @@
-export const runtime = "nodejs";
-
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getRedis } from "./_redis";
+import { kv } from "@vercel/kv";
+
+export const runtime = "nodejs";
 
 function json(res: VercelResponse, status: number, data: any) {
   res.status(status).setHeader("Content-Type", "application/json");
@@ -9,23 +9,26 @@ function json(res: VercelResponse, status: number, data: any) {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== "GET") return json(res, 405, { ok: false, error: "Method not allowed" });
-
   try {
-    const redis = getRedis();
+    if (req.method !== "GET") return json(res, 405, { ok: false, error: "Method not allowed" });
 
-    const limit = Math.min(Number(req.query.limit || 50), 200);
-    const ids = (await redis.lrange("timesheets:index", 0, limit - 1)) as string[];
+    const limit = Math.min(Number(req.query.limit || 200), 500);
 
-    const tickets: any[] = [];
-    for (const id of ids) {
-      const t = await redis.get(`timesheet:${id}`);
-      if (t) tickets.push(t);
-    }
+    // Get newest first
+    const ids = await kv.zrange<string[]>("tickets:index", -limit, -1);
+    const idsDesc = [...ids].reverse();
 
-    tickets.sort((a, b) => (b.submittedAt || "").localeCompare(a.submittedAt || ""));
-    return json(res, 200, { ok: true, tickets });
+    if (idsDesc.length === 0) return json(res, 200, { ok: true, tickets: [] });
+
+    const keys = idsDesc.map((id) => `ticket:${id}`);
+    const tickets = await kv.mget<any[]>(...keys);
+
+    // Filter nulls (in case some keys missing)
+    const clean = (tickets || []).filter(Boolean);
+
+    return json(res, 200, { ok: true, tickets: clean });
   } catch (e: any) {
-    return json(res, 500, { ok: false, error: e?.message || "Server error" });
+    console.error("admin-timesheets-list error:", e);
+    return json(res, 500, { ok: false, error: "Server error", details: String(e?.message || e) });
   }
 }
